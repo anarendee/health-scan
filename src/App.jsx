@@ -137,7 +137,7 @@ export default function App() {
 
   const analyzeFrame = async () => {
     if (!session) {
-      alert("ONNX AI Model is not ready yet! Please verify that public/model/skin_model.onnx is loaded.");
+      alert("ONNX AI Model is not ready yet!");
       return;
     }
     if (!videoRef.current) {
@@ -160,15 +160,17 @@ export default function App() {
       ctx.drawImage(video, 0, 0, 224, 224);
 
       const imgData = ctx.getImageData(0, 0, 224, 224).data;
-      const float32Data = new Float32Array(1 * 3 * 224 * 224);
+
+      // Tensor layout: NHWC [1, 224, 224, 3]
+      const float32Data = new Float32Array(1 * 224 * 224 * 3);
 
       for (let i = 0; i < 224 * 224; i++) {
-        float32Data[i] = imgData[i * 4] / 255.0;
-        float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;
-        float32Data[i + 224 * 224 * 2] = imgData[i * 4 + 2] / 255.0;
+        float32Data[i * 3]     = imgData[i * 4] / 255.0;     // R
+        float32Data[i * 3 + 1] = imgData[i * 4 + 1] / 255.0; // G
+        float32Data[i * 3 + 2] = imgData[i * 4 + 2] / 255.0; // B
       }
 
-      const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
+      const inputTensor = new ort.Tensor('float32', float32Data, [1, 224, 224, 3]);
       const feeds = {};
       feeds[session.inputNames[0]] = inputTensor;
 
