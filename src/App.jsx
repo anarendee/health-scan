@@ -22,6 +22,10 @@ export default function App() {
   const [status, setStatus] = useState("Initializing ONNX Runtime...");
   const [currentResult, setCurrentResult] = useState(null);
   const [history, setHistory] = useState([]);
+  
+  // Torch / Flashlight state
+  const [torchAvailable, setTorchAvailable] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
   // Load ONNX Model and Local Storage History
   useEffect(() => {
@@ -38,7 +42,6 @@ export default function App() {
         setLoading(false);
       }
 
-      // Load saved scan history from LocalStorage
       const saved = localStorage.getItem('healthscan_history');
       if (saved) {
         try { setHistory(JSON.parse(saved)); } catch (e) { /* ignore */ }
@@ -48,16 +51,43 @@ export default function App() {
     startCamera();
   }, []);
 
-  // Initialize rear camera stream
+  // Initialize rear camera stream and detect Torch capability
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
       });
       if (videoRef.current) videoRef.current.srcObject = stream;
+
+      // Check if camera supports Torch / Flashlight
+      const track = stream.getVideoTracks()[0];
+      if (track && track.getCapabilities) {
+        const capabilities = track.getCapabilities();
+        if (capabilities.torch) {
+          setTorchAvailable(true);
+        }
+      }
     } catch (err) {
       console.error("Camera access error:", err);
       setStatus("Camera access denied or unavailable.");
+    }
+  };
+
+  // Toggle Flashlight ON/OFF
+  const toggleTorch = async () => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    const track = videoRef.current.srcObject.getVideoTracks()[0];
+    if (!track) return;
+
+    try {
+      const nextState = !torchOn;
+      await track.applyConstraints({
+        advanced: [{ torch: nextState }]
+      });
+      setTorchOn(nextState);
+    } catch (err) {
+      console.error("Torch error:", err);
+      alert("Unable to switch flashlight on this device.");
     }
   };
 
@@ -90,7 +120,7 @@ export default function App() {
     const output = await session.run(feeds);
     const logits = output[session.outputNames[0]].data;
 
-    // Apply Softmax calculation to derive probabilities
+    // Softmax calculation
     const expValues = Array.from(logits).map(v => Math.exp(v));
     const sumExp = expValues.reduce((a, b) => a + b, 0);
     const probs = expValues.map(v => v / sumExp);
@@ -119,7 +149,6 @@ export default function App() {
 
     setCurrentResult(newScan);
 
-    // Save scan to LocalStorage history
     const updatedHistory = [newScan, ...history].slice(0, 10);
     setHistory(updatedHistory);
     localStorage.setItem('healthscan_history', JSON.stringify(updatedHistory));
@@ -140,7 +169,7 @@ export default function App() {
 
       {/* Medical Disclaimer Banner */}
       <div style={styles.disclaimer}>
-        <strong>⚠️ Medical Notice:</strong> This experimental application is for educational research and preliminary edge-AI evaluation. It does not provide medical diagnoses. Always consult a qualified dermatologist for clinical skin evaluations.
+        <strong>⚠️ Medical Notice:</strong> Experimental research tool. Ensure good lighting for reliable edge inference. Consult a dermatologist for medical evaluations.
       </div>
 
       {/* Main Dashboard Grid */}
@@ -150,6 +179,19 @@ export default function App() {
           <div style={styles.videoWrapper}>
             <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
             <div style={styles.reticle}></div>
+
+            {/* Flashlight Button Overlay */}
+            {torchAvailable && (
+              <button
+                onClick={toggleTorch}
+                style={{
+                  ...styles.torchButton,
+                  backgroundColor: torchOn ? '#eab308' : 'rgba(0,0,0,0.6)'
+                }}
+              >
+                {torchOn ? '🔦 Flash ON' : '💡 Flash OFF'}
+              </button>
+            )}
           </div>
 
           <p style={styles.statusText}>{status}</p>
@@ -194,7 +236,7 @@ export default function App() {
           </section>
         )}
 
-        {/* Local Storage History Card */}
+        {/* History Log */}
         <section style={styles.card}>
           <div style={styles.historyHeader}>
             <h2 style={styles.cardTitle}>Scan History Log</h2>
@@ -229,7 +271,6 @@ export default function App() {
   );
 }
 
-// Inline Mobile-First Component Styles
 const styles = {
   container: { maxWidth: '500px', margin: '0 auto', padding: '16px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1f2937', backgroundColor: '#f9fafb', minHeight: '100vh' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
@@ -241,6 +282,7 @@ const styles = {
   videoWrapper: { position: 'relative', width: '100%', height: '260px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000' },
   video: { width: '100%', height: '100%', objectFit: 'cover' },
   reticle: { position: 'absolute', top: '50%', left: '50%', width: '140px', height: '140px', transform: 'translate(-50%, -50%)', border: '2px dashed rgba(255, 255, 255, 0.8)', borderRadius: '12px', pointerEvents: 'none' },
+  torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' },
   statusText: { fontSize: '0.85rem', color: '#6b7280', textAlign: 'center', margin: '10px 0' },
   scanButton: { width: '100%', padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#2563eb', color: '#fff', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' },
   cardTitle: { fontSize: '1rem', fontWeight: '600', margin: '0 0 12px 0', color: '#374151' },
