@@ -135,7 +135,7 @@ export default function App() {
   const analyzeFrame = async () => {
     if (!session || !videoRef.current) return;
 
-    const t0 = performance.now(); // Start Telemetry Timer
+    const t0 = performance.now();
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -148,7 +148,6 @@ export default function App() {
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
-    // RGB Normalization to NCHW Format
     for (let i = 0; i < 224 * 224; i++) {
       float32Data[i] = imgData[i * 4] / 255.0;
       float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;
@@ -165,7 +164,6 @@ export default function App() {
 
     const logits = output[session.outputNames[0]].data;
 
-    // Softmax calculation
     const expValues = Array.from(logits).map(v => Math.exp(v));
     const sumExp = expValues.reduce((a, b) => a + b, 0);
     const probs = expValues.map(v => v / sumExp);
@@ -179,7 +177,7 @@ export default function App() {
       }
     }
 
-    const t1 = performance.now(); // End Telemetry Timer
+    const t1 = performance.now();
     const totalLatency = (t1 - t0).toFixed(1);
     const nnLatency = (inferenceEnd - inferenceStart).toFixed(1);
 
@@ -211,7 +209,7 @@ export default function App() {
     };
 
     setCurrentResult(scanRecord);
-    setTelemetry({ nnLatency, totalLatency, deviceRam: navigator.deviceMemory || 'Standard' });
+    setTelemetry({ nnLatency, totalLatency });
 
     const updatedHistory = [scanRecord, ...history].slice(0, 15);
     setHistory(updatedHistory);
@@ -261,95 +259,93 @@ export default function App() {
         <strong>🛡️ Institutional Research Protocol:</strong> On-device diagnostic screening evaluation tool. Operates zero-cloud processing for total patient data privacy. Not a substitute for formal histopathological biopsy.
       </div>
 
-      {/* SCANNER TAB */}
-      {activeTab === 'scanner' && (
-        <main style={styles.grid}>
+      {/* SCANNER TAB - Kept mounted in DOM via display styling */}
+      <main style={{ ...styles.grid, display: activeTab === 'scanner' ? 'flex' : 'none' }}>
+        <section style={styles.card}>
+          <div style={styles.videoWrapper}>
+            <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+            <div style={styles.reticle}>
+              <div style={styles.reticleCrosshair}></div>
+            </div>
+
+            {torchAvailable && (
+              <button 
+                onClick={toggleTorch} 
+                style={{ ...styles.torchButton, backgroundColor: torchOn ? '#eab308' : 'rgba(0,0,0,0.65)' }}
+              >
+                {torchOn ? '🔦 Torch Active' : '💡 Enable Torch'}
+              </button>
+            )}
+          </div>
+
+          <div style={styles.statusRow}>
+            <span style={styles.statusDot} />
+            <span style={styles.statusText}>{status}</span>
+          </div>
+
+          <button 
+            onClick={analyzeFrame} 
+            disabled={loading} 
+            style={{ ...styles.scanButton, opacity: loading ? 0.6 : 1 }}
+          >
+            ⚡ Execute Edge Inference
+          </button>
+        </section>
+
+        {/* Real-time Telemetry Card */}
+        {telemetry && (
+          <div style={styles.telemetryBar}>
+            <div>⚡ <strong>Inference Latency:</strong> {telemetry.nnLatency} ms</div>
+            <div>⏱️ <strong>Total Pipeline:</strong> {telemetry.totalLatency} ms</div>
+            <div>🔒 <strong>Cloud Data Transferred:</strong> 0 KB</div>
+          </div>
+        )}
+
+        {/* Diagnostic Result Dashboard */}
+        {currentResult && (
           <section style={styles.card}>
-            <div style={styles.videoWrapper}>
-              <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
-              <div style={styles.reticle}>
-                <div style={styles.reticleCrosshair}></div>
+            <div style={styles.resultHeader}>
+              <div>
+                <span style={styles.categoryTag}>{currentResult.category}</span>
+                <h2 style={styles.resultName}>{currentResult.label}</h2>
               </div>
-
-              {torchAvailable && (
-                <button 
-                  onClick={toggleTorch} 
-                  style={{ ...styles.torchButton, backgroundColor: torchOn ? '#eab308' : 'rgba(0,0,0,0.65)' }}
-                >
-                  {torchOn ? '🔦 Torch Active' : '💡 Enable Torch'}
-                </button>
-              )}
+              <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
+                {currentResult.riskLevel}
+              </span>
             </div>
 
-            <div style={styles.statusRow}>
-              <span style={styles.statusDot} />
-              <span style={styles.statusText}>{status}</span>
+            <p style={styles.descriptionText}>{currentResult.description}</p>
+
+            {/* Confidence Progress Meter */}
+            <div style={styles.meterContainer}>
+              <div style={styles.meterHeader}>
+                <span>Diagnostic Probability</span>
+                <strong>{currentResult.confidence}%</strong>
+              </div>
+              <div style={styles.progressBarBackground}>
+                <div 
+                  style={{ 
+                    ...styles.progressBarFill, 
+                    width: `${currentResult.confidence}%`, 
+                    backgroundColor: currentResult.color 
+                  }} 
+                />
+              </div>
             </div>
 
-            <button 
-              onClick={analyzeFrame} 
-              disabled={loading} 
-              style={{ ...styles.scanButton, opacity: loading ? 0.6 : 1 }}
-            >
-              ⚡ Execute Edge Inference
-            </button>
+            {/* Clinical Action Recommendation Box */}
+            <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
+              <strong style={{ color: currentResult.color }}>🩺 Recommended Clinical Action:</strong>
+              <p style={styles.actionText}>{currentResult.action}</p>
+            </div>
+
+            <div style={styles.metaFooter}>
+              <span>HAM10000 Benchmark Class</span>
+              <span>Timestamp: {currentResult.timestamp}</span>
+            </div>
           </section>
-
-          {/* Real-time Telemetry Card */}
-          {telemetry && (
-            <div style={styles.telemetryBar}>
-              <div>⚡ <strong>Inference Latency:</strong> {telemetry.nnLatency} ms</div>
-              <div>⏱️ <strong>Total Pipeline:</strong> {telemetry.totalLatency} ms</div>
-              <div>🔒 <strong>Cloud Data Transferred:</strong> 0 KB</div>
-            </div>
-          )}
-
-          {/* Diagnostic Result Dashboard */}
-          {currentResult && (
-            <section style={styles.card}>
-              <div style={styles.resultHeader}>
-                <div>
-                  <span style={styles.categoryTag}>{currentResult.category}</span>
-                  <h2 style={styles.resultName}>{currentResult.label}</h2>
-                </div>
-                <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
-                  {currentResult.riskLevel}
-                </span>
-              </div>
-
-              <p style={styles.descriptionText}>{currentResult.description}</p>
-
-              {/* Confidence Progress Meter */}
-              <div style={styles.meterContainer}>
-                <div style={styles.meterHeader}>
-                  <span>Diagnostic Probability</span>
-                  <strong>{currentResult.confidence}%</strong>
-                </div>
-                <div style={styles.progressBarBackground}>
-                  <div 
-                    style={{ 
-                      ...styles.progressBarFill, 
-                      width: `${currentResult.confidence}%`, 
-                      backgroundColor: currentResult.color 
-                    }} 
-                  />
-                </div>
-              </div>
-
-              {/* Clinical Action Recommendation Box */}
-              <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
-                <strong style={{ color: currentResult.color }}>🩺 Recommended Clinical Action:</strong>
-                <p style={styles.actionText}>{currentResult.action}</p>
-              </div>
-
-              <div style={styles.metaFooter}>
-                <span>HAM10000 Benchmark Class</span>
-                <span>Timestamp: {currentResult.timestamp}</span>
-              </div>
-            </section>
-          )}
-        </main>
-      )}
+        )}
+      </main>
 
       {/* HISTORY LOGS TAB */}
       {activeTab === 'history' && (
@@ -429,7 +425,7 @@ const styles = {
   navTabs: { display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '14px', gap: '8px' },
   tabBtn: { background: 'none', border: 'none', padding: '8px 12px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
   disclaimer: { backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', padding: '10px 12px', borderRadius: '6px', fontSize: '0.75rem', color: '#78350f', marginBottom: '14px', lineHeight: '1.4' },
-  grid: { display: 'flex', flexDirection: 'column', gap: '14px' },
+  grid: { flexDirection: 'column', gap: '14px' },
   card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)', border: '1px solid #e2e8f0' },
   videoWrapper: { position: 'relative', width: '100%', height: '270px', borderRadius: '10px', overflow: 'hidden', backgroundColor: '#0f172a' },
   video: { width: '100%', height: '100%', objectFit: 'cover' },
