@@ -67,12 +67,13 @@ export default function App() {
   const canvasRef = useRef(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
   const [status, setStatus] = useState("Initializing ONNX WebAssembly...");
+  const [errorMessage, setErrorMessage] = useState(null);
   const [currentResult, setCurrentResult] = useState(null);
   const [history, setHistory] = useState([]);
-  const [activeTab, setActiveTab] = useState('scanner'); // 'scanner', 'history', 'guide'
+  const [activeTab, setActiveTab] = useState('scanner');
   
-  // Hardware & Telemetry State
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [telemetry, setTelemetry] = useState(null);
@@ -84,10 +85,12 @@ export default function App() {
         const modelSession = await ort.InferenceSession.create('./model/skin_model.onnx');
         setSession(modelSession);
         setLoading(false);
+        setErrorMessage(null);
         setStatus("System Ready • On-Device Engine Active");
       } catch (err) {
-        console.error(err);
-        setStatus("Engine Initialization Error. Verify public/model/skin_model.onnx");
+        console.error("ONNX Model Initialization Error:", err);
+        setErrorMessage(`Model failed to load: ${err.message}. Check public/model/skin_model.onnx`);
+        setStatus("Initialization Failed");
         setLoading(false);
       }
 
@@ -133,87 +136,104 @@ export default function App() {
   };
 
   const analyzeFrame = async () => {
-    if (!session || !videoRef.current) return;
-
-    const t0 = performance.now();
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    canvas.width = 224;
-    canvas.height = 224;
-    ctx.drawImage(video, 0, 0, 224, 224);
-
-    const imgData = ctx.getImageData(0, 0, 224, 224).data;
-    const float32Data = new Float32Array(1 * 3 * 224 * 224);
-
-    for (let i = 0; i < 224 * 224; i++) {
-      float32Data[i] = imgData[i * 4] / 255.0;
-      float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;
-      float32Data[i + 224 * 224 * 2] = imgData[i * 4 + 2] / 255.0;
+    if (!session) {
+      alert("ONNX AI Model is not ready yet! Please verify that public/model/skin_model.onnx is loaded.");
+      return;
+    }
+    if (!videoRef.current) {
+      alert("Camera feed is not active.");
+      return;
     }
 
-    const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
-    const feeds = {};
-    feeds[session.inputNames[0]] = inputTensor;
+    setAnalyzing(true);
+    setErrorMessage(null);
 
-    const inferenceStart = performance.now();
-    const output = await session.run(feeds);
-    const inferenceEnd = performance.now();
+    try {
+      const t0 = performance.now();
 
-    const logits = output[session.outputNames[0]].data;
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
 
-    const expValues = Array.from(logits).map(v => Math.exp(v));
-    const sumExp = expValues.reduce((a, b) => a + b, 0);
-    const probs = expValues.map(v => v / sumExp);
+      canvas.width = 224;
+      canvas.height = 224;
+      ctx.drawImage(video, 0, 0, 224, 224);
 
-    let maxIdx = 0;
-    let maxProb = probs[0];
-    for (let i = 1; i < probs.length; i++) {
-      if (probs[i] > maxProb) {
-        maxProb = probs[i];
-        maxIdx = i;
+      const imgData = ctx.getImageData(0, 0, 224, 224).data;
+      const float32Data = new Float32Array(1 * 3 * 224 * 224);
+
+      for (let i = 0; i < 224 * 224; i++) {
+        float32Data[i] = imgData[i * 4] / 255.0;
+        float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;
+        float32Data[i + 224 * 224 * 2] = imgData[i * 4 + 2] / 255.0;
       }
+
+      const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
+      const feeds = {};
+      feeds[session.inputNames[0]] = inputTensor;
+
+      const inferenceStart = performance.now();
+      const output = await session.run(feeds);
+      const inferenceEnd = performance.now();
+
+      const logits = output[session.outputNames[0]].data;
+
+      const expValues = Array.from(logits).map(v => Math.exp(v));
+      const sumExp = expValues.reduce((a, b) => a + b, 0);
+      const probs = expValues.map(v => v / sumExp);
+
+      let maxIdx = 0;
+      let maxProb = probs[0];
+      for (let i = 1; i < probs.length; i++) {
+        if (probs[i] > maxProb) {
+          maxProb = probs[i];
+          maxIdx = i;
+        }
+      }
+
+      const t1 = performance.now();
+      const totalLatency = (t1 - t0).toFixed(1);
+      const nnLatency = (inferenceEnd - inferenceStart).toFixed(1);
+
+      const meta = CLASS_METADATA[maxIdx] || {
+        name: `Class ${maxIdx}`,
+        category: "Unknown",
+        riskLevel: "Unclassified",
+        color: "#6b7280",
+        action: "Consult medical specialist for clinical evaluation.",
+        description: "Diagnostic score generated by ONNX runtime."
+      };
+
+      const confidence = (maxProb * 100).toFixed(1);
+
+      const scanRecord = {
+        id: Date.now(),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        date: new Date().toLocaleDateString(),
+        label: meta.name,
+        category: meta.category,
+        riskLevel: meta.riskLevel,
+        color: meta.color,
+        action: meta.action,
+        description: meta.description,
+        confidence,
+        probs,
+        nnLatency,
+        totalLatency
+      };
+
+      setCurrentResult(scanRecord);
+      setTelemetry({ nnLatency, totalLatency });
+
+      const updatedHistory = [scanRecord, ...history].slice(0, 15);
+      setHistory(updatedHistory);
+      localStorage.setItem('healthscan_clinical_history', JSON.stringify(updatedHistory));
+    } catch (err) {
+      console.error("Inference Processing Error:", err);
+      setErrorMessage(`Inference failed: ${err.message}`);
+    } finally {
+      setAnalyzing(false);
     }
-
-    const t1 = performance.now();
-    const totalLatency = (t1 - t0).toFixed(1);
-    const nnLatency = (inferenceEnd - inferenceStart).toFixed(1);
-
-    const meta = CLASS_METADATA[maxIdx] || {
-      name: `Class ${maxIdx}`,
-      category: "Unknown",
-      riskLevel: "Unclassified",
-      color: "#6b7280",
-      action: "Consult medical specialist for clinical evaluation.",
-      description: "Diagnostic score generated by ONNX runtime."
-    };
-
-    const confidence = (maxProb * 100).toFixed(1);
-
-    const scanRecord = {
-      id: Date.now(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      date: new Date().toLocaleDateString(),
-      label: meta.name,
-      category: meta.category,
-      riskLevel: meta.riskLevel,
-      color: meta.color,
-      action: meta.action,
-      description: meta.description,
-      confidence,
-      probs,
-      nnLatency,
-      totalLatency
-    };
-
-    setCurrentResult(scanRecord);
-    setTelemetry({ nnLatency, totalLatency });
-
-    const updatedHistory = [scanRecord, ...history].slice(0, 15);
-    setHistory(updatedHistory);
-    localStorage.setItem('healthscan_clinical_history', JSON.stringify(updatedHistory));
   };
 
   const clearHistory = () => {
@@ -223,7 +243,6 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      {/* Executive Header */}
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>EdgeAI HealthScan</h1>
@@ -232,7 +251,6 @@ export default function App() {
         <span style={styles.badge}>{loading ? "Initializing..." : "WASM Engine Ready"}</span>
       </header>
 
-      {/* Navigation Tabs */}
       <nav style={styles.navTabs}>
         <button 
           onClick={() => setActiveTab('scanner')} 
@@ -254,12 +272,17 @@ export default function App() {
         </button>
       </nav>
 
-      {/* Medical Compliance Banner */}
       <div style={styles.disclaimer}>
         <strong>🛡️ Institutional Research Protocol:</strong> On-device diagnostic screening evaluation tool. Operates zero-cloud processing for total patient data privacy. Not a substitute for formal histopathological biopsy.
       </div>
 
-      {/* SCANNER TAB - Kept mounted in DOM via display styling */}
+      {errorMessage && (
+        <div style={styles.errorBox}>
+          <strong>⚠️ Execution Error:</strong> {errorMessage}
+        </div>
+      )}
+
+      {/* SCANNER TAB */}
       <main style={{ ...styles.grid, display: activeTab === 'scanner' ? 'flex' : 'none' }}>
         <section style={styles.card}>
           <div style={styles.videoWrapper}>
@@ -279,20 +302,19 @@ export default function App() {
           </div>
 
           <div style={styles.statusRow}>
-            <span style={styles.statusDot} />
+            <span style={{ ...styles.statusDot, backgroundColor: session ? '#22c55e' : '#f59e0b' }} />
             <span style={styles.statusText}>{status}</span>
           </div>
 
           <button 
             onClick={analyzeFrame} 
-            disabled={loading} 
-            style={{ ...styles.scanButton, opacity: loading ? 0.6 : 1 }}
+            disabled={loading || analyzing} 
+            style={{ ...styles.scanButton, opacity: (loading || analyzing) ? 0.6 : 1 }}
           >
-            ⚡ Execute Edge Inference
+            {analyzing ? "⌛ Processing Neural Network..." : "⚡ Execute Edge Inference"}
           </button>
         </section>
 
-        {/* Real-time Telemetry Card */}
         {telemetry && (
           <div style={styles.telemetryBar}>
             <div>⚡ <strong>Inference Latency:</strong> {telemetry.nnLatency} ms</div>
@@ -301,7 +323,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Diagnostic Result Dashboard */}
         {currentResult && (
           <section style={styles.card}>
             <div style={styles.resultHeader}>
@@ -316,7 +337,6 @@ export default function App() {
 
             <p style={styles.descriptionText}>{currentResult.description}</p>
 
-            {/* Confidence Progress Meter */}
             <div style={styles.meterContainer}>
               <div style={styles.meterHeader}>
                 <span>Diagnostic Probability</span>
@@ -333,7 +353,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Clinical Action Recommendation Box */}
             <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
               <strong style={{ color: currentResult.color }}>🩺 Recommended Clinical Action:</strong>
               <p style={styles.actionText}>{currentResult.action}</p>
@@ -425,6 +444,7 @@ const styles = {
   navTabs: { display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '14px', gap: '8px' },
   tabBtn: { background: 'none', border: 'none', padding: '8px 12px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
   disclaimer: { backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', padding: '10px 12px', borderRadius: '6px', fontSize: '0.75rem', color: '#78350f', marginBottom: '14px', lineHeight: '1.4' },
+  errorBox: { backgroundColor: '#fee2e2', borderLeft: '4px solid #ef4444', padding: '10px 12px', borderRadius: '6px', fontSize: '0.78rem', color: '#991b1b', marginBottom: '14px', lineHeight: '1.4' },
   grid: { flexDirection: 'column', gap: '14px' },
   card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)', border: '1px solid #e2e8f0' },
   videoWrapper: { position: 'relative', width: '100%', height: '270px', borderRadius: '10px', overflow: 'hidden', backgroundColor: '#0f172a' },
@@ -433,7 +453,7 @@ const styles = {
   reticleCrosshair: { position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', transform: 'translate(-50%, -50%)', borderRadius: '50%', backgroundColor: 'rgba(59, 130, 246, 0.8)' },
   torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
   statusRow: { display: 'flex', alignItems: 'center', gap: '6px', margin: '10px 0', justifyContent: 'center' },
-  statusDot: { width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' },
+  statusDot: { width: '6px', height: '6px', borderRadius: '50%' },
   statusText: { fontSize: '0.8rem', color: '#64748b', fontWeight: '500' },
   scanButton: { width: '100%', padding: '13px', borderRadius: '8px', border: 'none', backgroundColor: '#2563eb', color: '#fff', fontSize: '0.95rem', fontWeight: '700', cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.2)' },
   telemetryBar: { display: 'flex', justifyContent: 'space-between', backgroundColor: '#0f172a', color: '#f8fafc', padding: '10px 14px', borderRadius: '8px', fontSize: '0.72rem', fontFamily: 'monospace' },
