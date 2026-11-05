@@ -9,24 +9,30 @@ const CLASS_METADATA = {
     category: "Pre-Cancerous", 
     riskLevel: "Moderate Risk", 
     color: "#d97706",
-    action: "Schedule dermatological consultation. Monitor for changes in texture or growth.",
-    description: "Sun-induced scaly lesion with potential for malignant transformation."
+    action: "Schedule dermatological consultation. Monitor for texture or rapid growth changes.",
+    description: "Rough, scaly precancerous patches formed by years of sun exposure. Can potentially transition into Squamous Cell Carcinoma if untreated.",
+    treatment: "Dermatologists typically treat via cryotherapy (freezing), topical prescription creams (e.g., Fluorouracil), or photodynamic therapy.",
+    link: "https://www.mayoclinic.org/diseases-conditions/actinic-keratosis/symptoms-causes/syc-20354969"
   },
   1: { 
     name: "Basal Cell Carcinoma (bcc)", 
-    category: "Malignant", 
+    category: "Malignant Cancer", 
     riskLevel: "High Risk", 
     color: "#dc2626",
     action: "Prompt biopsy recommended. Consult a dermatologic surgeon for evaluation.",
-    description: "Common non-melanoma skin malignancy originating in basal cells."
+    description: "The most common form of skin cancer, originating in basal cells. Grows slowly and rarely spreads, but causes local tissue damage if ignored.",
+    treatment: "Standard clinical care includes surgical excision, Mohs micrographic surgery, electrodessication, or topical immunotherapies.",
+    link: "https://www.mayoclinic.org/diseases-conditions/basal-cell-carcinoma/symptoms-causes/syc-20354144"
   },
   2: { 
     name: "Benign Keratosis (bkl)", 
     category: "Non-Cancerous", 
     riskLevel: "Low Risk", 
     color: "#16a34a",
-    action: "No immediate medical intervention required. Routine annual monitoring.",
-    description: "Harmless epidermal lesion (seborrheic keratosis or solar lentigo)."
+    action: "No immediate intervention required. Perform routine annual monitoring.",
+    description: "Harmless skin growths (such as seborrheic keratosis or age spots). Non-contagious and purely cosmetic in nature.",
+    treatment: "Treatment is usually unnecessary unless irritated by clothing. Removal options include light cryotherapy or curettage.",
+    link: "https://www.mayoclinic.org/diseases-conditions/seborrheic-keratosis/symptoms-causes/syc-20353878"
   },
   3: { 
     name: "Dermatofibroma (df)", 
@@ -34,15 +40,19 @@ const CLASS_METADATA = {
     riskLevel: "Low Risk", 
     color: "#16a34a",
     action: "Benign dermal papule. No treatment necessary unless symptomatic.",
-    description: "Common benign fibrous nodule typically found on lower limbs."
+    description: "Firm, harmless red-to-brown bumps under the skin commonly caused by minor insect bites or micro-injuries.",
+    treatment: "Usually left alone. If painful or cosmetically undesirable, surgical excision under local anesthesia can remove the nodule.",
+    link: "https://dermnetnz.org/topics/dermatofibroma"
   },
   4: { 
     name: "Melanoma (mel)", 
-    category: "Malignant", 
+    category: "Malignant Cancer", 
     riskLevel: "CRITICAL RISK", 
     color: "#991b1b",
     action: "URGENT: Immediate professional dermoscopy and excisional biopsy required.",
-    description: "Aggressive cutaneous malignancy arising from pigment-producing melanocytes."
+    description: "The most aggressive form of skin cancer arising from pigment-producing melanocytes. Early detection and intervention are vital.",
+    treatment: "Requires urgent wide local surgical excision, sentinel lymph node biopsy, and potential systemic immunotherapies or targeted therapy.",
+    link: "https://www.mayoclinic.org/diseases-conditions/melanoma/symptoms-causes/syc-20374884"
   },
   5: { 
     name: "Melanocytic Nevus (nv)", 
@@ -50,15 +60,19 @@ const CLASS_METADATA = {
     riskLevel: "Normal", 
     color: "#2563eb",
     action: "Normal pigmented nevus. Perform monthly self-examination using ABCDE criteria.",
-    description: "Common benign proliferation of cutaneous melanocytes."
+    description: "Common, non-cancerous skin growths formed by clusters of melanocytes. Common in adults and generally harmless.",
+    treatment: "No clinical intervention required. Monitor for changes in border regularity, color, diameter, or evolution over time.",
+    link: "https://www.mayoclinic.org/diseases-conditions/moles/symptoms-causes/syc-20375200"
   },
   6: { 
     name: "Vascular Lesion (vasc)", 
     category: "Benign Growth", 
     riskLevel: "Low Risk", 
     color: "#7c3aed",
-    action: "Benign vascular malformation. Clinical evaluation if bleeding or rapidly changing.",
-    description: "Cutaneous vascular anomaly such as cherry angioma or pyogenic granuloma."
+    action: "Benign vascular growth. Clinical evaluation recommended if bleeding or rapidly changing.",
+    description: "Harmless skin spots caused by clusters of enlarged blood vessels (e.g., cherry angiomas or vascular malformations).",
+    treatment: "Generally benign. Pulsed-dye laser therapy or electrocautery can be performed if bleeding or for cosmetic preference.",
+    link: "https://dermnetnz.org/topics/vascular-lesions"
   }
 };
 
@@ -160,8 +174,6 @@ export default function App() {
       ctx.drawImage(video, 0, 0, 224, 224);
 
       const imgData = ctx.getImageData(0, 0, 224, 224).data;
-
-      // Tensor layout: NHWC [1, 224, 224, 3]
       const float32Data = new Float32Array(1 * 224 * 224 * 3);
 
       for (let i = 0; i < 224 * 224; i++) {
@@ -203,7 +215,9 @@ export default function App() {
         riskLevel: "Unclassified",
         color: "#6b7280",
         action: "Consult medical specialist for clinical evaluation.",
-        description: "Diagnostic score generated by ONNX runtime."
+        description: "Diagnostic score generated by ONNX runtime.",
+        treatment: "Consult a healthcare provider.",
+        link: "https://www.mayoclinic.org"
       };
 
       const confidence = (maxProb * 100).toFixed(1);
@@ -218,6 +232,8 @@ export default function App() {
         color: meta.color,
         action: meta.action,
         description: meta.description,
+        treatment: meta.treatment,
+        link: meta.link,
         confidence,
         probs,
         nnLatency,
@@ -325,6 +341,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Diagnostic Result Dashboard */}
         {currentResult && (
           <section style={styles.card}>
             <div style={styles.resultHeader}>
@@ -337,8 +354,13 @@ export default function App() {
               </span>
             </div>
 
-            <p style={styles.descriptionText}>{currentResult.description}</p>
+            {/* Condition Description Box */}
+            <div style={styles.infoSection}>
+              <strong style={styles.infoTitle}>📖 What is this condition?</strong>
+              <p style={styles.descriptionText}>{currentResult.description}</p>
+            </div>
 
+            {/* Confidence Progress Meter */}
             <div style={styles.meterContainer}>
               <div style={styles.meterHeader}>
                 <span>Diagnostic Probability</span>
@@ -355,9 +377,28 @@ export default function App() {
               </div>
             </div>
 
+            {/* Recommended Action Box */}
             <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
-              <strong style={{ color: currentResult.color }}>🩺 Recommended Clinical Action:</strong>
+              <strong style={{ color: currentResult.color }}>🩺 Recommended Next Steps:</strong>
               <p style={styles.actionText}>{currentResult.action}</p>
+            </div>
+
+            {/* Standard Medical Management / Treatment Box */}
+            <div style={styles.treatmentBox}>
+              <strong>💊 Common Medical Management:</strong>
+              <p style={styles.treatmentText}>{currentResult.treatment}</p>
+            </div>
+
+            {/* External Knowledge Reference Link */}
+            <div style={styles.linkContainer}>
+              <a 
+                href={currentResult.link} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                style={styles.referenceLink}
+              >
+                🔗 Read Clinical Medical Reference (Mayo Clinic / DermNet) →
+              </a>
             </div>
 
             <div style={styles.metaFooter}>
@@ -459,17 +500,23 @@ const styles = {
   statusText: { fontSize: '0.8rem', color: '#64748b', fontWeight: '500' },
   scanButton: { width: '100%', padding: '13px', borderRadius: '8px', border: 'none', backgroundColor: '#2563eb', color: '#fff', fontSize: '0.95rem', fontWeight: '700', cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.2)' },
   telemetryBar: { display: 'flex', justifyContent: 'space-between', backgroundColor: '#0f172a', color: '#f8fafc', padding: '10px 14px', borderRadius: '8px', fontSize: '0.72rem', fontFamily: 'monospace' },
-  resultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
+  resultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' },
   categoryTag: { fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em' },
   resultName: { fontSize: '1.15rem', fontWeight: '800', margin: '2px 0 0 0', color: '#0f172a' },
   riskBadge: { color: '#fff', fontSize: '0.7rem', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' },
-  descriptionText: { fontSize: '0.82rem', color: '#475569', lineHeight: '1.4', margin: '0 0 12px 0' },
+  infoSection: { marginBottom: '12px' },
+  infoTitle: { fontSize: '0.8rem', color: '#1e293b' },
+  descriptionText: { fontSize: '0.82rem', color: '#475569', lineHeight: '1.4', margin: '4px 0 0 0' },
   meterContainer: { marginBottom: '14px' },
   meterHeader: { display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '4px', color: '#334155' },
   progressBarBackground: { width: '100%', height: '10px', backgroundColor: '#e2e8f0', borderRadius: '5px', overflow: 'hidden' },
   progressBarFill: { height: '100%', transition: 'width 0.4s ease' },
-  actionBox: { backgroundColor: '#f8fafc', borderLeft: '4px solid', padding: '10px 12px', borderRadius: '6px', marginBottom: '12px' },
+  actionBox: { backgroundColor: '#f8fafc', borderLeft: '4px solid', padding: '10px 12px', borderRadius: '6px', marginBottom: '10px' },
   actionText: { fontSize: '0.8rem', color: '#1e293b', margin: '4px 0 0 0', lineHeight: '1.4' },
+  treatmentBox: { backgroundColor: '#f1f5f9', padding: '10px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '0.8rem', color: '#334155' },
+  treatmentText: { margin: '4px 0 0 0', lineHeight: '1.4', color: '#475569' },
+  linkContainer: { marginBottom: '12px' },
+  referenceLink: { color: '#2563eb', fontSize: '0.78rem', fontWeight: '600', textDecoration: 'none' },
   metaFooter: { display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94a3b8', borderTop: '1px solid #f1f5f9', paddingTop: '8px' },
   cardTitle: { fontSize: '1rem', fontWeight: '700', margin: '0 0 12px 0', color: '#0f172a' },
   historyHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' },
