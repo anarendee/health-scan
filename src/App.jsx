@@ -1,17 +1,65 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as ort from 'onnxruntime-web';
 
-// Set WebAssembly engine path
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 
-const CLASS_LABELS = {
-  0: { name: "Actinic Keratosis", risk: "Pre-Cancerous", color: "#d97706" },
-  1: { name: "Basal Cell Carcinoma", risk: "Malignant", color: "#dc2626" },
-  2: { name: "Benign Keratosis", risk: "Non-Cancerous", color: "#16a34a" },
-  3: { name: "Dermatofibroma", risk: "Non-Cancerous", color: "#16a34a" },
-  4: { name: "Melanoma", risk: "High Risk", color: "#b91c1c" },
-  5: { name: "Melanocytic Nevus", risk: "Normal Mole", color: "#2563eb" },
-  6: { name: "Vascular Lesion", risk: "Benign Growth", color: "#7c3aed" }
+const CLASS_METADATA = {
+  0: { 
+    name: "Actinic Keratosis (akiec)", 
+    category: "Pre-Cancerous", 
+    riskLevel: "Moderate Risk", 
+    color: "#d97706",
+    action: "Schedule dermatological consultation. Monitor for changes in texture or growth.",
+    description: "Sun-induced scaly lesion with potential for malignant transformation."
+  },
+  1: { 
+    name: "Basal Cell Carcinoma (bcc)", 
+    category: "Malignant", 
+    riskLevel: "High Risk", 
+    color: "#dc2626",
+    action: "Prompt biopsy recommended. Consult a dermatologic surgeon for evaluation.",
+    description: "Common non-melanoma skin malignancy originating in basal cells."
+  },
+  2: { 
+    name: "Benign Keratosis (bkl)", 
+    category: "Non-Cancerous", 
+    riskLevel: "Low Risk", 
+    color: "#16a34a",
+    action: "No immediate medical intervention required. Routine annual monitoring.",
+    description: "Harmless epidermal lesion (seborrheic keratosis or solar lentigo)."
+  },
+  3: { 
+    name: "Dermatofibroma (df)", 
+    category: "Non-Cancerous", 
+    riskLevel: "Low Risk", 
+    color: "#16a34a",
+    action: "Benign dermal papule. No treatment necessary unless symptomatic.",
+    description: "Common benign fibrous nodule typically found on lower limbs."
+  },
+  4: { 
+    name: "Melanoma (mel)", 
+    category: "Malignant", 
+    riskLevel: "CRITICAL RISK", 
+    color: "#991b1b",
+    action: "URGENT: Immediate professional dermoscopy and excisional biopsy required.",
+    description: "Aggressive cutaneous malignancy arising from pigment-producing melanocytes."
+  },
+  5: { 
+    name: "Melanocytic Nevus (nv)", 
+    category: "Benign Mole", 
+    riskLevel: "Normal", 
+    color: "#2563eb",
+    action: "Normal pigmented nevus. Perform monthly self-examination using ABCDE criteria.",
+    description: "Common benign proliferation of cutaneous melanocytes."
+  },
+  6: { 
+    name: "Vascular Lesion (vasc)", 
+    category: "Benign Growth", 
+    riskLevel: "Low Risk", 
+    color: "#7c3aed",
+    action: "Benign vascular malformation. Clinical evaluation if bleeding or rapidly changing.",
+    description: "Cutaneous vascular anomaly such as cherry angioma or pyogenic granuloma."
+  }
 };
 
 export default function App() {
@@ -19,39 +67,39 @@ export default function App() {
   const canvasRef = useRef(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState("Initializing ONNX Runtime...");
+  const [status, setStatus] = useState("Initializing ONNX WebAssembly...");
   const [currentResult, setCurrentResult] = useState(null);
   const [history, setHistory] = useState([]);
+  const [activeTab, setActiveTab] = useState('scanner'); // 'scanner', 'history', 'guide'
   
-  // Torch / Flashlight state
+  // Hardware & Telemetry State
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [telemetry, setTelemetry] = useState(null);
 
-  // Load ONNX Model and Local Storage History
   useEffect(() => {
     async function init() {
       try {
-        setStatus("Loading skin assessment model...");
+        setStatus("Loading MobileNetV3 WASM weights...");
         const modelSession = await ort.InferenceSession.create('./model/skin_model.onnx');
         setSession(modelSession);
         setLoading(false);
-        setStatus("AI Model Ready");
+        setStatus("System Ready • On-Device Engine Active");
       } catch (err) {
         console.error(err);
-        setStatus("Model load failed. Verify skin_model.onnx in public/model/");
+        setStatus("Engine Initialization Error. Verify public/model/skin_model.onnx");
         setLoading(false);
       }
 
-      const saved = localStorage.getItem('healthscan_history');
+      const saved = localStorage.getItem('healthscan_clinical_history');
       if (saved) {
-        try { setHistory(JSON.parse(saved)); } catch (e) { /* ignore */ }
+        try { setHistory(JSON.parse(saved)); } catch (e) {}
       }
     }
     init();
     startCamera();
   }, []);
 
-  // Initialize rear camera stream and detect Torch capability
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -59,21 +107,17 @@ export default function App() {
       });
       if (videoRef.current) videoRef.current.srcObject = stream;
 
-      // Check if camera supports Torch / Flashlight
       const track = stream.getVideoTracks()[0];
       if (track && track.getCapabilities) {
         const capabilities = track.getCapabilities();
-        if (capabilities.torch) {
-          setTorchAvailable(true);
-        }
+        if (capabilities.torch) setTorchAvailable(true);
       }
     } catch (err) {
-      console.error("Camera access error:", err);
-      setStatus("Camera access denied or unavailable.");
+      console.error("Camera Hardware Error:", err);
+      setStatus("Camera Access Denied or Unavailable");
     }
   };
 
-  // Toggle Flashlight ON/OFF
   const toggleTorch = async () => {
     if (!videoRef.current || !videoRef.current.srcObject) return;
     const track = videoRef.current.srcObject.getVideoTracks()[0];
@@ -81,19 +125,17 @@ export default function App() {
 
     try {
       const nextState = !torchOn;
-      await track.applyConstraints({
-        advanced: [{ torch: nextState }]
-      });
+      await track.applyConstraints({ advanced: [{ torch: nextState }] });
       setTorchOn(nextState);
     } catch (err) {
-      console.error("Torch error:", err);
-      alert("Unable to switch flashlight on this device.");
+      alert("Flashlight control not supported on this browser context.");
     }
   };
 
-  // Perform AI Inference on captured frame
   const analyzeFrame = async () => {
     if (!session || !videoRef.current) return;
+
+    const t0 = performance.now(); // Start Telemetry Timer
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -106,18 +148,21 @@ export default function App() {
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
-    // Convert RGBA frame buffer to NCHW Float32 tensor normalized to [0, 1]
+    // RGB Normalization to NCHW Format
     for (let i = 0; i < 224 * 224; i++) {
-      float32Data[i] = imgData[i * 4] / 255.0;                   // R
-      float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;     // G
-      float32Data[i + 224 * 224 * 2] = imgData[i * 4 + 2] / 255.0; // B
+      float32Data[i] = imgData[i * 4] / 255.0;
+      float32Data[i + 224 * 224] = imgData[i * 4 + 1] / 255.0;
+      float32Data[i + 224 * 224 * 2] = imgData[i * 4 + 2] / 255.0;
     }
 
     const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
     const feeds = {};
     feeds[session.inputNames[0]] = inputTensor;
 
+    const inferenceStart = performance.now();
     const output = await session.run(feeds);
+    const inferenceEnd = performance.now();
+
     const logits = output[session.outputNames[0]].data;
 
     // Softmax calculation
@@ -134,137 +179,241 @@ export default function App() {
       }
     }
 
-    const confidence = (maxProb * 100).toFixed(1);
-    const labelInfo = CLASS_LABELS[maxIdx] || { name: `Class ${maxIdx}`, risk: "Unknown", color: "#4b5563" };
+    const t1 = performance.now(); // End Telemetry Timer
+    const totalLatency = (t1 - t0).toFixed(1);
+    const nnLatency = (inferenceEnd - inferenceStart).toFixed(1);
 
-    const newScan = {
+    const meta = CLASS_METADATA[maxIdx] || {
+      name: `Class ${maxIdx}`,
+      category: "Unknown",
+      riskLevel: "Unclassified",
+      color: "#6b7280",
+      action: "Consult medical specialist for clinical evaluation.",
+      description: "Diagnostic score generated by ONNX runtime."
+    };
+
+    const confidence = (maxProb * 100).toFixed(1);
+
+    const scanRecord = {
       id: Date.now(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       date: new Date().toLocaleDateString(),
-      label: labelInfo.name,
-      risk: labelInfo.risk,
-      color: labelInfo.color,
-      confidence
+      label: meta.name,
+      category: meta.category,
+      riskLevel: meta.riskLevel,
+      color: meta.color,
+      action: meta.action,
+      description: meta.description,
+      confidence,
+      probs,
+      nnLatency,
+      totalLatency
     };
 
-    setCurrentResult(newScan);
+    setCurrentResult(scanRecord);
+    setTelemetry({ nnLatency, totalLatency, deviceRam: navigator.deviceMemory || 'Standard' });
 
-    const updatedHistory = [newScan, ...history].slice(0, 10);
+    const updatedHistory = [scanRecord, ...history].slice(0, 15);
     setHistory(updatedHistory);
-    localStorage.setItem('healthscan_history', JSON.stringify(updatedHistory));
+    localStorage.setItem('healthscan_clinical_history', JSON.stringify(updatedHistory));
   };
 
   const clearHistory = () => {
     setHistory([]);
-    localStorage.removeItem('healthscan_history');
+    localStorage.removeItem('healthscan_clinical_history');
   };
 
   return (
     <div style={styles.container}>
-      {/* App Header */}
+      {/* Executive Header */}
       <header style={styles.header}>
-        <h1 style={styles.title}>EdgeAI HealthScan</h1>
-        <span style={styles.badge}>{loading ? "Loading..." : "Offline Ready"}</span>
+        <div>
+          <h1 style={styles.title}>EdgeAI HealthScan</h1>
+          <p style={styles.subtitle}>Client-Side Clinical Decision Support System</p>
+        </div>
+        <span style={styles.badge}>{loading ? "Initializing..." : "WASM Engine Ready"}</span>
       </header>
 
-      {/* Medical Disclaimer Banner */}
+      {/* Navigation Tabs */}
+      <nav style={styles.navTabs}>
+        <button 
+          onClick={() => setActiveTab('scanner')} 
+          style={{ ...styles.tabBtn, borderBottom: activeTab === 'scanner' ? '3px solid #2563eb' : 'none', color: activeTab === 'scanner' ? '#2563eb' : '#6b7280' }}
+        >
+          📷 AI Scanner
+        </button>
+        <button 
+          onClick={() => setActiveTab('history')} 
+          style={{ ...styles.tabBtn, borderBottom: activeTab === 'history' ? '3px solid #2563eb' : 'none', color: activeTab === 'history' ? '#2563eb' : '#6b7280' }}
+        >
+          📋 Scan Logs ({history.length})
+        </button>
+        <button 
+          onClick={() => setActiveTab('guide')} 
+          style={{ ...styles.tabBtn, borderBottom: activeTab === 'guide' ? '3px solid #2563eb' : 'none', color: activeTab === 'guide' ? '#2563eb' : '#6b7280' }}
+        >
+          🩺 ABCDE Guide
+        </button>
+      </nav>
+
+      {/* Medical Compliance Banner */}
       <div style={styles.disclaimer}>
-        <strong>⚠️ Medical Notice:</strong> Experimental research tool. Ensure good lighting for reliable edge inference. Consult a dermatologist for medical evaluations.
+        <strong>🛡️ Institutional Research Protocol:</strong> On-device diagnostic screening evaluation tool. Operates zero-cloud processing for total patient data privacy. Not a substitute for formal histopathological biopsy.
       </div>
 
-      {/* Main Dashboard Grid */}
-      <main style={styles.grid}>
-        {/* Camera Scanner Card */}
-        <section style={styles.card}>
-          <div style={styles.videoWrapper}>
-            <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
-            <div style={styles.reticle}></div>
-
-            {/* Flashlight Button Overlay */}
-            {torchAvailable && (
-              <button
-                onClick={toggleTorch}
-                style={{
-                  ...styles.torchButton,
-                  backgroundColor: torchOn ? '#eab308' : 'rgba(0,0,0,0.6)'
-                }}
-              >
-                {torchOn ? '🔦 Flash ON' : '💡 Flash OFF'}
-              </button>
-            )}
-          </div>
-
-          <p style={styles.statusText}>{status}</p>
-
-          <button
-            onClick={analyzeFrame}
-            disabled={loading}
-            style={{ ...styles.scanButton, opacity: loading ? 0.6 : 1 }}
-          >
-            📸 Scan & Analyze Lesion
-          </button>
-        </section>
-
-        {/* Diagnostic Results Card */}
-        {currentResult && (
+      {/* SCANNER TAB */}
+      {activeTab === 'scanner' && (
+        <main style={styles.grid}>
           <section style={styles.card}>
-            <h2 style={styles.cardTitle}>Latest Scan Result</h2>
-            <div style={styles.resultHeader}>
-              <h3 style={styles.resultName}>{currentResult.label}</h3>
-              <span style={{ ...styles.riskTag, backgroundColor: currentResult.color }}>
-                {currentResult.risk}
-              </span>
+            <div style={styles.videoWrapper}>
+              <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+              <div style={styles.reticle}>
+                <div style={styles.reticleCrosshair}></div>
+              </div>
+
+              {torchAvailable && (
+                <button 
+                  onClick={toggleTorch} 
+                  style={{ ...styles.torchButton, backgroundColor: torchOn ? '#eab308' : 'rgba(0,0,0,0.65)' }}
+                >
+                  {torchOn ? '🔦 Torch Active' : '💡 Enable Torch'}
+                </button>
+              )}
             </div>
 
-            {/* Visual Confidence Bar */}
-            <div style={styles.meterContainer}>
-              <div style={styles.meterHeader}>
-                <span>Model Confidence</span>
-                <strong>{currentResult.confidence}%</strong>
-              </div>
-              <div style={styles.progressBarBackground}>
-                <div
-                  style={{
-                    ...styles.progressBarFill,
-                    width: `${currentResult.confidence}%`,
-                    backgroundColor: currentResult.color
-                  }}
-                />
-              </div>
+            <div style={styles.statusRow}>
+              <span style={styles.statusDot} />
+              <span style={styles.statusText}>{status}</span>
             </div>
-            <p style={styles.timestamp}>Analyzed on-device at {currentResult.timestamp}</p>
+
+            <button 
+              onClick={analyzeFrame} 
+              disabled={loading} 
+              style={{ ...styles.scanButton, opacity: loading ? 0.6 : 1 }}
+            >
+              ⚡ Execute Edge Inference
+            </button>
           </section>
-        )}
 
-        {/* History Log */}
+          {/* Real-time Telemetry Card */}
+          {telemetry && (
+            <div style={styles.telemetryBar}>
+              <div>⚡ <strong>Inference Latency:</strong> {telemetry.nnLatency} ms</div>
+              <div>⏱️ <strong>Total Pipeline:</strong> {telemetry.totalLatency} ms</div>
+              <div>🔒 <strong>Cloud Data Transferred:</strong> 0 KB</div>
+            </div>
+          )}
+
+          {/* Diagnostic Result Dashboard */}
+          {currentResult && (
+            <section style={styles.card}>
+              <div style={styles.resultHeader}>
+                <div>
+                  <span style={styles.categoryTag}>{currentResult.category}</span>
+                  <h2 style={styles.resultName}>{currentResult.label}</h2>
+                </div>
+                <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
+                  {currentResult.riskLevel}
+                </span>
+              </div>
+
+              <p style={styles.descriptionText}>{currentResult.description}</p>
+
+              {/* Confidence Progress Meter */}
+              <div style={styles.meterContainer}>
+                <div style={styles.meterHeader}>
+                  <span>Diagnostic Probability</span>
+                  <strong>{currentResult.confidence}%</strong>
+                </div>
+                <div style={styles.progressBarBackground}>
+                  <div 
+                    style={{ 
+                      ...styles.progressBarFill, 
+                      width: `${currentResult.confidence}%`, 
+                      backgroundColor: currentResult.color 
+                    }} 
+                  />
+                </div>
+              </div>
+
+              {/* Clinical Action Recommendation Box */}
+              <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
+                <strong style={{ color: currentResult.color }}>🩺 Recommended Clinical Action:</strong>
+                <p style={styles.actionText}>{currentResult.action}</p>
+              </div>
+
+              <div style={styles.metaFooter}>
+                <span>HAM10000 Benchmark Class</span>
+                <span>Timestamp: {currentResult.timestamp}</span>
+              </div>
+            </section>
+          )}
+        </main>
+      )}
+
+      {/* HISTORY LOGS TAB */}
+      {activeTab === 'history' && (
         <section style={styles.card}>
           <div style={styles.historyHeader}>
-            <h2 style={styles.cardTitle}>Scan History Log</h2>
+            <h2 style={styles.cardTitle}>Local Telemetry & Audit Logs</h2>
             {history.length > 0 && (
-              <button onClick={clearHistory} style={styles.clearBtn}>Clear</button>
+              <button onClick={clearHistory} style={styles.clearBtn}>Purge Logs</button>
             )}
           </div>
 
           {history.length === 0 ? (
-            <p style={styles.emptyText}>No local scans recorded yet.</p>
+            <p style={styles.emptyText}>No local scan sessions recorded in browser storage.</p>
           ) : (
             <ul style={styles.historyList}>
               {history.map((item) => (
                 <li key={item.id} style={styles.historyItem}>
                   <div>
                     <strong style={{ color: item.color }}>{item.label}</strong>
-                    <div style={styles.historySub}>{item.date} • {item.timestamp}</div>
+                    <div style={styles.historySub}>
+                      {item.date} • {item.timestamp} • {item.nnLatency ? `${item.nnLatency}ms latency` : 'WASM'}
+                    </div>
                   </div>
                   <div style={styles.historyRight}>
-                    <span>{item.confidence}%</span>
-                    <span style={{ ...styles.riskDot, backgroundColor: item.color }} />
+                    <span style={{ ...styles.riskTagSmall, backgroundColor: item.color }}>{item.riskLevel}</span>
+                    <strong>{item.confidence}%</strong>
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </section>
-      </main>
+      )}
+
+      {/* ABCDE CLINICAL GUIDE TAB */}
+      {activeTab === 'guide' && (
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Dermatological Screening Framework</h2>
+          <p style={styles.descriptionText}>Standard clinical ABCDE criteria used alongside machine learning vision models for cutaneous lesion assessment:</p>
+          
+          <div style={styles.guideGrid}>
+            <div style={styles.guideItem}>
+              <span style={styles.guideLetter}>A</span>
+              <div><strong>Asymmetry:</strong> One half of the lesion does not match the visual appearance of the other half.</div>
+            </div>
+            <div style={styles.guideItem}>
+              <span style={styles.guideLetter}>B</span>
+              <div><strong>Border:</strong> Edges are irregular, ragged, notched, or blurred.</div>
+            </div>
+            <div style={styles.guideItem}>
+              <span style={styles.guideLetter}>C</span>
+              <div><strong>Color:</strong> Pigmentation is non-uniform with shades of brown, black, pink, or red.</div>
+            </div>
+            <div style={styles.guideItem}>
+              <span style={styles.guideLetter}>D</span>
+              <div><strong>Diameter:</strong> Lesion size greater than 6mm (approx. pencil eraser size).</div>
+            </div>
+            <div style={styles.guideItem}>
+              <span style={styles.guideLetter}>E</span>
+              <div><strong>Evolving:</strong> Lesion changes in size, shape, color, or elevation over time.</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
@@ -272,34 +421,48 @@ export default function App() {
 }
 
 const styles = {
-  container: { maxWidth: '500px', margin: '0 auto', padding: '16px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1f2937', backgroundColor: '#f9fafb', minHeight: '100vh' },
+  container: { maxWidth: '520px', margin: '0 auto', padding: '16px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#0f172a', backgroundColor: '#f8fafc', minHeight: '100vh' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
-  title: { fontSize: '1.25rem', fontWeight: '700', margin: 0, color: '#111827' },
-  badge: { fontSize: '0.75rem', fontWeight: '600', padding: '4px 8px', borderRadius: '12px', backgroundColor: '#dbeafe', color: '#1e40af' },
-  disclaimer: { backgroundColor: '#fffbe6', border: '1px solid #ffe58f', padding: '10px 12px', borderRadius: '8px', fontSize: '0.78rem', color: '#855800', marginBottom: '16px', lineHeight: '1.4' },
-  grid: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #e5e7eb' },
-  videoWrapper: { position: 'relative', width: '100%', height: '260px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000' },
+  title: { fontSize: '1.25rem', fontWeight: '800', margin: 0, color: '#0f172a', letterSpacing: '-0.02em' },
+  subtitle: { fontSize: '0.75rem', color: '#64748b', margin: '2px 0 0 0' },
+  badge: { fontSize: '0.7rem', fontWeight: '700', padding: '4px 10px', borderRadius: '12px', backgroundColor: '#e0e7ff', color: '#3730a3' },
+  navTabs: { display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '14px', gap: '8px' },
+  tabBtn: { background: 'none', border: 'none', padding: '8px 12px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
+  disclaimer: { backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', padding: '10px 12px', borderRadius: '6px', fontSize: '0.75rem', color: '#78350f', marginBottom: '14px', lineHeight: '1.4' },
+  grid: { display: 'flex', flexDirection: 'column', gap: '14px' },
+  card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)', border: '1px solid #e2e8f0' },
+  videoWrapper: { position: 'relative', width: '100%', height: '270px', borderRadius: '10px', overflow: 'hidden', backgroundColor: '#0f172a' },
   video: { width: '100%', height: '100%', objectFit: 'cover' },
-  reticle: { position: 'absolute', top: '50%', left: '50%', width: '140px', height: '140px', transform: 'translate(-50%, -50%)', border: '2px dashed rgba(255, 255, 255, 0.8)', borderRadius: '12px', pointerEvents: 'none' },
-  torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' },
-  statusText: { fontSize: '0.85rem', color: '#6b7280', textAlign: 'center', margin: '10px 0' },
-  scanButton: { width: '100%', padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#2563eb', color: '#fff', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' },
-  cardTitle: { fontSize: '1rem', fontWeight: '600', margin: '0 0 12px 0', color: '#374151' },
-  resultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
-  resultName: { fontSize: '1.1rem', fontWeight: '700', margin: 0 },
-  riskTag: { color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '4px 8px', borderRadius: '4px', textTransform: 'uppercase' },
-  meterContainer: { marginBottom: '8px' },
-  meterHeader: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px', color: '#4b5563' },
-  progressBarBackground: { width: '100%', height: '10px', backgroundColor: '#e5e7eb', borderRadius: '5px', overflow: 'hidden' },
+  reticle: { position: 'absolute', top: '50%', left: '50%', width: '150px', height: '150px', transform: 'translate(-50%, -50%)', border: '2px dashed rgba(255, 255, 255, 0.85)', borderRadius: '14px', pointerEvents: 'none' },
+  reticleCrosshair: { position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', transform: 'translate(-50%, -50%)', borderRadius: '50%', backgroundColor: 'rgba(59, 130, 246, 0.8)' },
+  torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
+  statusRow: { display: 'flex', alignItems: 'center', gap: '6px', margin: '10px 0', justifyContent: 'center' },
+  statusDot: { width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' },
+  statusText: { fontSize: '0.8rem', color: '#64748b', fontWeight: '500' },
+  scanButton: { width: '100%', padding: '13px', borderRadius: '8px', border: 'none', backgroundColor: '#2563eb', color: '#fff', fontSize: '0.95rem', fontWeight: '700', cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.2)' },
+  telemetryBar: { display: 'flex', justifyContent: 'space-between', backgroundColor: '#0f172a', color: '#f8fafc', padding: '10px 14px', borderRadius: '8px', fontSize: '0.72rem', fontFamily: 'monospace' },
+  resultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
+  categoryTag: { fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em' },
+  resultName: { fontSize: '1.15rem', fontWeight: '800', margin: '2px 0 0 0', color: '#0f172a' },
+  riskBadge: { color: '#fff', fontSize: '0.7rem', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' },
+  descriptionText: { fontSize: '0.82rem', color: '#475569', lineHeight: '1.4', margin: '0 0 12px 0' },
+  meterContainer: { marginBottom: '14px' },
+  meterHeader: { display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '4px', color: '#334155' },
+  progressBarBackground: { width: '100%', height: '10px', backgroundColor: '#e2e8f0', borderRadius: '5px', overflow: 'hidden' },
   progressBarFill: { height: '100%', transition: 'width 0.4s ease' },
-  timestamp: { fontSize: '0.75rem', color: '#9ca3af', margin: 0, textAlign: 'right' },
-  historyHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  clearBtn: { backgroundColor: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.8rem', cursor: 'pointer', fontWeight: '600' },
-  emptyText: { fontSize: '0.85rem', color: '#9ca3af', margin: 0 },
+  actionBox: { backgroundColor: '#f8fafc', borderLeft: '4px solid', padding: '10px 12px', borderRadius: '6px', marginBottom: '12px' },
+  actionText: { fontSize: '0.8rem', color: '#1e293b', margin: '4px 0 0 0', lineHeight: '1.4' },
+  metaFooter: { display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94a3b8', borderTop: '1px solid #f1f5f9', paddingTop: '8px' },
+  cardTitle: { fontSize: '1rem', fontWeight: '700', margin: '0 0 12px 0', color: '#0f172a' },
+  historyHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' },
+  clearBtn: { backgroundColor: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.78rem', cursor: 'pointer', fontWeight: '700' },
+  emptyText: { fontSize: '0.82rem', color: '#94a3b8', margin: 0 },
   historyList: { listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '8px' },
-  historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6' },
-  historySub: { fontSize: '0.75rem', color: '#9ca3af' },
-  historyRight: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: '600' },
-  riskDot: { width: '8px', height: '8px', borderRadius: '50%' }
+  historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f1f5f9' },
+  historySub: { fontSize: '0.72rem', color: '#94a3b8', marginTop: '2px' },
+  historyRight: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', fontSize: '0.85rem' },
+  riskTagSmall: { color: '#fff', fontSize: '0.65rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px' },
+  guideGrid: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  guideItem: { display: 'flex', gap: '12px', alignItems: 'flex-start', fontSize: '0.82rem', color: '#334155', lineHeight: '1.4' },
+  guideLetter: { backgroundColor: '#2563eb', color: '#fff', fontWeight: '800', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', flexShrink: 0 }
 };
