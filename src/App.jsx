@@ -103,30 +103,34 @@ export default function App() {
   const [torchOn, setTorchOn] = useState(false);
   const [telemetry, setTelemetry] = useState(null);
 
-  useEffect(() => {
-    async function init() {
-      try {
-        setStatus("Loading MobileNetV3 WASM weights...");
-        const modelSession = await ort.InferenceSession.create('./model/skin_model.onnx');
-        setSession(modelSession);
-        setLoading(false);
-        setErrorMessage(null);
-        setStatus("v2.0 Engine Active • Dynamic Tensor Pipeline");
-      } catch (err) {
-        console.error("ONNX Model Initialization Error:", err);
-        setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
-        setStatus("Initialization Failed");
-        setLoading(false);
-      }
-
-      const saved = localStorage.getItem('healthscan_clinical_history');
-      if (saved) {
-        try { setHistory(JSON.parse(saved)); } catch (e) {}
-      }
+  // Near the top of src/App.jsx in useEffect:
+useEffect(() => {
+  async function init() {
+    try {
+      setStatus("Loading MobileNetV3 WASM weights...");
+      // Changed to root-relative path for reliable public asset fetching
+      const modelPath = `${window.location.origin}/model/skin_model.onnx`;
+      const modelSession = await ort.InferenceSession.create(modelPath);
+      
+      setSession(modelSession);
+      setLoading(false);
+      setErrorMessage(null);
+      setStatus("v2.0 Engine Active • Model Ready");
+    } catch (err) {
+      console.error("ONNX Model Initialization Error:", err);
+      setErrorMessage(`Model failed to load: ${err.message}. Verify that public/model/skin_model.onnx exists.`);
+      setStatus("Initialization Failed");
+      setLoading(false);
     }
-    init();
-    startCamera();
-  }, []);
+
+    const saved = localStorage.getItem('healthscan_clinical_history');
+    if (saved) {
+      try { setHistory(JSON.parse(saved)); } catch (e) {}
+    }
+  }
+  init();
+  startCamera();
+}, []);
 
   const startCamera = async () => {
     try {
@@ -313,43 +317,48 @@ export default function App() {
   };
 
   const handleFileUpload = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
 
-    setCurrentResult(null);
-    setAnalyzing(true);
-    setErrorMessage(null);
+  if (!session) {
+    setErrorMessage("AI Model is still initializing. Please wait a moment and try again.");
+    return;
+  }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = async () => {
-        setPreviewImage(event.target.result);
+  setCurrentResult(null);
+  setAnalyzing(true);
+  setErrorMessage(null);
 
-        const offCanvas = document.createElement('canvas');
-        offCanvas.width = 224;
-        offCanvas.height = 224;
-        const ctx = offCanvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, 224, 224);
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = async () => {
+      setPreviewImage(event.target.result);
 
-        try {
-          await runInferenceOnCanvas(offCanvas);
-        } catch (err) {
-          console.error(err);
-          setErrorMessage(`File inference failed: ${err.message}`);
-        } finally {
-          setAnalyzing(false);
-        }
-      };
-      img.onerror = () => {
-        setErrorMessage("Invalid image format. Please upload a valid PNG, JPG, or WEBP file.");
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = 224;
+      offCanvas.height = 224;
+      const ctx = offCanvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, 224, 224);
+
+      try {
+        await runInferenceOnCanvas(offCanvas);
+      } catch (err) {
+        console.error(err);
+        setErrorMessage(`File inference failed: ${err.message}`);
+      } finally {
         setAnalyzing(false);
-      };
-      img.src = event.target.result;
+      }
     };
-    reader.readAsDataURL(file);
-    e.target.value = null;
+    img.onerror = () => {
+      setErrorMessage("Invalid image format. Please upload a valid PNG, JPG, or WEBP file.");
+      setAnalyzing(false);
+    };
+    img.src = event.target.result;
   };
+  reader.readAsDataURL(file);
+  e.target.value = null;
+};
 
   const generatePDFReport = () => {
     if (!currentResult) return;
