@@ -111,7 +111,7 @@ export default function App() {
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • CDSS Diagnostics Ready");
+        setStatus("v2.0 Engine Active • HAM10000 Scoped");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
         setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
@@ -169,14 +169,10 @@ export default function App() {
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
 
     const inputName = session.inputNames[0];
-    const inputMeta = session.inputMetadata ? session.inputMetadata[inputName] : null;
-    const dims = (inputMeta && inputMeta.dimensions && inputMeta.dimensions.length === 4) 
-      ? inputMeta.dimensions 
-      : [1, 224, 224, 3];
-    
-    const isNCHW = (dims[1] === 3);
+    const tensorDims = [1, 3, 224, 224];
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
+    // Standard ImageNet Normalization
     const mean = [0.485, 0.456, 0.406];
     const std  = [0.229, 0.224, 0.225];
 
@@ -185,18 +181,12 @@ export default function App() {
       const g = (imgData[i * 4 + 1] / 255.0 - mean[1]) / std[1];
       const b = (imgData[i * 4 + 2] / 255.0 - mean[2]) / std[2];
 
-      if (isNCHW) {
-        float32Data[i] = r;
-        float32Data[224 * 224 + i] = g;
-        float32Data[2 * 224 * 224 + i] = b;
-      } else {
-        float32Data[i * 3] = r;
-        float32Data[i * 3 + 1] = g;
-        float32Data[i * 3 + 2] = b;
-      }
+      float32Data[i] = r;
+      float32Data[224 * 224 + i] = g;
+      float32Data[2 * 224 * 224 + i] = b;
     }
 
-    const inputTensor = new ort.Tensor('float32', float32Data, dims);
+    const inputTensor = new ort.Tensor('float32', float32Data, tensorDims);
     const feeds = { [inputName]: inputTensor };
 
     const inferenceStart = performance.now();
@@ -204,17 +194,12 @@ export default function App() {
     const inferenceEnd = performance.now();
 
     const rawOutput = Array.from(output[session.outputNames[0]].data);
-    const sumRaw = rawOutput.reduce((a, b) => a + b, 0);
-
-    let probs;
-    if (Math.abs(sumRaw - 1.0) < 0.08 && rawOutput.every(v => v >= -0.01)) {
-      probs = rawOutput.map(v => Math.max(0, v));
-    } else {
-      const maxLogit = Math.max(...rawOutput);
-      const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
-      const sumExp = expValues.reduce((a, b) => a + b, 0);
-      probs = expValues.map(v => v / sumExp);
-    }
+    
+    // Stable Softmax Logit Normalization
+    const maxLogit = Math.max(...rawOutput);
+    const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
+    const sumExp = expValues.reduce((a, b) => a + b, 0);
+    const probs = expValues.map(v => v / sumExp);
 
     const differentialDiagnosis = Object.keys(CLASS_METADATA).map((idx) => {
       const classId = parseInt(idx, 10);
@@ -240,8 +225,8 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Advisory low-confidence threshold (< 25%)
-    const isOOD = topMatch.rawProbability < 0.25;
+    // Out-of-Distribution (<30% certainty threshold) for Non-Dermatoscopic images / Scars / Wounds
+    const isNonDermatoscopic = topMatch.rawProbability < 0.30;
 
     const scanRecord = {
       id: Date.now(),
@@ -257,7 +242,7 @@ export default function App() {
       link: meta.link,
       confidence: topMatch.probabilityPercentage,
       differentialDiagnosis,
-      isOOD,
+      isNonDermatoscopic,
       zoomScale: inputMode === 'camera' ? `${zoomScale}x` : '1.0x',
       imageSnapshot,
       nnLatency,
@@ -265,7 +250,7 @@ export default function App() {
     };
 
     setCurrentResult(scanRecord);
-    setTelemetry({ nnLatency, totalLatency, isOOD });
+    setTelemetry({ nnLatency, totalLatency, isNonDermatoscopic });
 
     const updatedHistory = [scanRecord, ...history].slice(0, 15);
     setHistory(updatedHistory);
@@ -426,7 +411,7 @@ export default function App() {
         </div>
 
         <div class="footer">
-          Institutional Protocol Notice: On-device screening evaluation output generated via MobileNetV3 WASM (v2.0 System). Not a substitute for histopathological biopsy. | Network Transferred: 0 KB
+          Institutional Protocol Notice: On-device screening evaluation output generated via MobileNetV3 WASM (v2.0 System). Scoped strictly to HAM10000 benchmark dataset. Not a substitute for histopathological biopsy. | Network Transferred: 0 KB
         </div>
         <script>
           window.onload = function() { window.print(); }
@@ -448,7 +433,7 @@ export default function App() {
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>EdgeAI HealthScan <span style={styles.v2Tag}>v2.0</span></h1>
-          <p style={styles.subtitle}>On-Device CDSS with OOD Anomaly Detection</p>
+          <p style={styles.subtitle}>On-Device CDSS with OOD Anomaly Safeguards</p>
         </div>
         <span style={styles.badge}>{loading ? "Initializing..." : "v2.0 WASM Active"}</span>
       </header>
@@ -475,7 +460,7 @@ export default function App() {
       </nav>
 
       <div style={styles.disclaimer}>
-        <strong>🛡️ Institutional Research Protocol:</strong> On-device diagnostic screening system equipped with Out-of-Distribution (OOD) anomaly safeguards. Operates zero-cloud processing. Not a substitute for formal histopathological biopsy.
+        <strong>🛡️ Institutional Research Protocol:</strong> On-device decision support system scoped to the 7-class HAM10000 dermatoscopic benchmark. Zero cloud processing. For research evaluation only.
       </div>
 
       {errorMessage && (
@@ -557,7 +542,7 @@ export default function App() {
             </div>
 
             <div style={styles.hamGuideNotice}>
-              💡 <strong>HAM10000 Benchmark:</strong> Upload magnified dermatoscopic images centered on a skin lesion.
+              💡 <strong>HAM10000 Dataset Scope:</strong> Upload close-up, magnified dermatoscopic images of skin lesions. Scars, open cuts, or wide photos trigger the Out-of-Distribution (OOD) safeguard.
             </div>
           </div>
 
@@ -582,7 +567,7 @@ export default function App() {
           <div style={styles.statusRow}>
             <span style={{ ...styles.statusDot, backgroundColor: session ? '#22c55e' : '#f59e0b' }} />
             <span style={styles.statusText}>
-              {analyzing ? "⌛ Running WASM Neural Network Inference..." : status}
+              {analyzing ? "⌛ Executing WASM Neural Network..." : status}
             </span>
           </div>
 
@@ -592,7 +577,7 @@ export default function App() {
               disabled={loading || analyzing} 
               style={{ ...styles.scanButton, opacity: (loading || analyzing) ? 0.6 : 1 }}
             >
-              {analyzing ? "⌛ Executing Neural Network..." : "⚡ Execute Edge Inference"}
+              {analyzing ? "⌛ Running WASM Inference..." : "⚡ Execute Edge Inference"}
             </button>
           )}
         </section>
@@ -601,19 +586,19 @@ export default function App() {
           <div style={styles.telemetryBar}>
             <div>⚡ <strong>Inference:</strong> {telemetry.nnLatency} ms</div>
             <div>⏱️ <strong>Pipeline:</strong> {telemetry.totalLatency} ms</div>
-            <div>🛡️ <strong>OOD Shield:</strong> {telemetry.isOOD ? '⚠️ Advisory' : '✅ Clear'}</div>
+            <div>🛡️ <strong>OOD Safeguard:</strong> {telemetry.isNonDermatoscopic ? '⚠️ Non-Dermatoscopic Target' : '✅ Lesion Match'}</div>
           </div>
         )}
 
-        {/* DIAGNOSTIC RESULTS SECTION - ALWAYS RENDERS UPON SCAN */}
+        {/* DIAGNOSTIC RESULTS SECTION */}
         {currentResult && (
           <section style={styles.card}>
-            {/* Low-Confidence / OOD Advisory Banner (Displayed at top if confidence < 25%) */}
-            {currentResult.isOOD && (
+            {/* OOD Anomaly Safeguard Banner */}
+            {currentResult.isNonDermatoscopic && (
               <div style={styles.oodBanner}>
-                <strong>⚠️ Low Confidence Advisory Notice:</strong>
+                <strong>⚠️ Out-of-Distribution / Non-Dermatoscopic Target Notice:</strong>
                 <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', lineHeight: '1.4' }}>
-                  Top probability is below 25% certainty ({currentResult.confidence}%). Review the full differential matrix below for secondary diagnostic probabilities.
+                  The scan returned a low certainty score ({currentResult.confidence}%). The target appears to be a scar, wound, or standard photograph outside the HAM10000 benchmark training scope. Secondary diagnostic probabilities are displayed below for research reference.
                 </p>
               </div>
             )}
@@ -716,7 +701,7 @@ export default function App() {
                   <div>
                     <strong style={{ color: item.color }}>{item.label}</strong>
                     <div style={styles.historySub}>
-                      {item.date} • {item.timestamp} • {item.isOOD ? '⚠️ Advisory' : 'Normal'}
+                      {item.date} • {item.timestamp} • {item.isNonDermatoscopic ? '⚠️ OOD Flagged' : 'Normal'}
                     </div>
                   </div>
                   <div style={styles.historyRight}>
