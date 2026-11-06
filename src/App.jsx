@@ -98,7 +98,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('scanner');
   const [inputMode, setInputMode] = useState('camera'); 
   const [previewImage, setPreviewImage] = useState(null);
-  const [zoomScale, setZoomScale] = useState(1.0); // 1.0x to 3.0x digital zoom
+  const [zoomScale, setZoomScale] = useState(1.0);
 
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -162,7 +162,6 @@ export default function App() {
     }
   };
 
-  // Execution Engine: Tensor Prep & Inference Run
   const runInferenceOnCanvas = async (sourceCanvas) => {
     if (!session) throw new Error("ONNX AI Model session is not ready.");
 
@@ -191,7 +190,7 @@ export default function App() {
     const sumExp = expValues.reduce((a, b) => a + b, 0);
     const probs = expValues.map(v => v / sumExp);
 
-    // Build Full 7-Class Differential Diagnosis Ranking
+    // 7-Class Differential Diagnosis Matrix
     const differentialDiagnosis = Object.keys(CLASS_METADATA).map((idx) => {
       const classId = parseInt(idx, 10);
       const meta = CLASS_METADATA[classId];
@@ -216,7 +215,7 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Out-of-Distribution (OOD) & High Uncertainty Guardrail Flag (< 45% Top Certainty)
+    // Out-of-Distribution (<45% certainty) Flag
     const isOOD = topMatch.rawProbability < 0.45;
 
     const scanRecord = {
@@ -260,7 +259,6 @@ export default function App() {
       canvas.height = 224;
       const ctx = canvas.getContext('2d');
 
-      // Apply digital crop zoom math
       const srcW = video.videoWidth / zoomScale;
       const srcH = video.videoHeight / zoomScale;
       const srcX = (video.videoWidth - srcW) / 2;
@@ -293,7 +291,6 @@ export default function App() {
         canvas.height = 224;
         const ctx = canvas.getContext('2d');
 
-        // Apply crop zoom math to uploaded file
         const srcW = img.width / zoomScale;
         const srcH = img.height / zoomScale;
         const srcX = (img.width - srcW) / 2;
@@ -314,7 +311,6 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // v2.0 Printable PDF Consultation Report
   const generatePDFReport = () => {
     if (!currentResult) return;
 
@@ -466,7 +462,6 @@ export default function App() {
 
       {/* SCANNER TAB */}
       <main style={{ ...styles.grid, display: activeTab === 'scanner' ? 'flex' : 'none' }}>
-        {/* Source Mode Toggle */}
         <div style={styles.modeToggleRow}>
           <button 
             onClick={() => setInputMode('camera')}
@@ -483,7 +478,8 @@ export default function App() {
         </div>
 
         <section style={styles.card}>
-          {inputMode === 'camera' ? (
+          {/* Persistent Video Container */}
+          <div style={{ display: inputMode === 'camera' ? 'block' : 'none' }}>
             <div style={styles.videoWrapper}>
               <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
               <div style={styles.reticle}>
@@ -499,7 +495,10 @@ export default function App() {
                 </button>
               )}
             </div>
-          ) : (
+          </div>
+
+          {/* Persistent File Container */}
+          <div style={{ display: inputMode === 'file' ? 'block' : 'none' }}>
             <div style={styles.uploadDropzone} onClick={() => fileInputRef.current.click()}>
               {previewImage ? (
                 <img src={previewImage} alt="Uploaded sample" style={styles.previewImg} />
@@ -518,9 +517,8 @@ export default function App() {
                 onChange={handleFileUpload} 
               />
             </div>
-          )}
+          </div>
 
-          {/* Digital Zoom Slider Control */}
           <div style={styles.zoomControlBox}>
             <label style={styles.zoomLabel}>
               🔍 Digital Target Zoom: <strong>{zoomScale.toFixed(1)}x</strong>
@@ -560,10 +558,8 @@ export default function App() {
           </div>
         )}
 
-        {/* v2.0 Diagnostic Result Dashboard */}
         {currentResult && (
           <section style={styles.card}>
-            {/* Out-of-Distribution (OOD) Warning Banner */}
             {currentResult.isOOD && (
               <div style={styles.oodBanner}>
                 <strong>⚠️ Out-of-Distribution / High Uncertainty Warning:</strong>
@@ -588,7 +584,6 @@ export default function App() {
               <p style={styles.descriptionText}>{currentResult.description}</p>
             </div>
 
-            {/* Top Primary Confidence Bar */}
             <div style={styles.meterContainer}>
               <div style={styles.meterHeader}>
                 <span>Primary Probability</span>
@@ -605,7 +600,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* v2.0 Full 7-Class Differential Diagnosis Matrix */}
             <div style={styles.differentialBox}>
               <strong style={styles.infoTitle}>📊 Full 7-Class Differential Diagnosis Breakdown:</strong>
               <div style={styles.differentialList}>
@@ -654,7 +648,7 @@ export default function App() {
         )}
       </main>
 
-      {/* HISTORY LOGS TAB */}
+      {/* HISTORY TAB */}
       {activeTab === 'history' && (
         <section style={styles.card}>
           <div style={styles.historyHeader}>
@@ -687,7 +681,7 @@ export default function App() {
         </section>
       )}
 
-      {/* ABCDE CLINICAL GUIDE TAB */}
+      {/* GUIDE TAB */}
       {activeTab === 'guide' && (
         <section style={styles.card}>
           <h2 style={styles.cardTitle}>Dermatological Screening Framework</h2>
