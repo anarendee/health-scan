@@ -85,7 +85,6 @@ const CLASS_METADATA = {
 
 export default function App() {
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const [session, setSession] = useState(null);
@@ -112,7 +111,7 @@ export default function App() {
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • OOD Guardrail Enabled");
+        setStatus("v2.0 Engine Active • Dynamic Tensor Pipeline Ready");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
         setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
@@ -162,6 +161,7 @@ export default function App() {
     }
   };
 
+  // Fail-Safe Inference Pipeline with Auto Shape Detection (NCHW vs NHWC)
   const runInferenceOnCanvas = async (sourceCanvas) => {
     if (!session) throw new Error("ONNX AI Model session is not ready.");
 
@@ -169,16 +169,32 @@ export default function App() {
     const ctx = sourceCanvas.getContext('2d');
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
 
-    const float32Data = new Float32Array(1 * 224 * 224 * 3);
+    const inputName = session.inputNames[0];
+    const inputMeta = session.inputMetadata ? session.inputMetadata[inputName] : null;
+    const dims = (inputMeta && inputMeta.dimensions) ? inputMeta.dimensions : [1, 224, 224, 3];
+    
+    // Check if tensor layout is NCHW [1, 3, 224, 224] or NHWC [1, 224, 224, 3]
+    const isNCHW = (dims[1] === 3);
+    const float32Data = new Float32Array(1 * 3 * 224 * 224);
+
     for (let i = 0; i < 224 * 224; i++) {
-      float32Data[i * 3]     = imgData[i * 4] / 255.0;     // Red
-      float32Data[i * 3 + 1] = imgData[i * 4 + 1] / 255.0; // Green
-      float32Data[i * 3 + 2] = imgData[i * 4 + 2] / 255.0; // Blue
+      const r = imgData[i * 4] / 255.0;
+      const g = imgData[i * 4 + 1] / 255.0;
+      const b = imgData[i * 4 + 2] / 255.0;
+
+      if (isNCHW) {
+        float32Data[i] = r;
+        float32Data[224 * 224 + i] = g;
+        float32Data[2 * 224 * 224 + i] = b;
+      } else {
+        float32Data[i * 3] = r;
+        float32Data[i * 3 + 1] = g;
+        float32Data[i * 3 + 2] = b;
+      }
     }
 
-    const inputTensor = new ort.Tensor('float32', float32Data, [1, 224, 224, 3]);
-    const feeds = {};
-    feeds[session.inputNames[0]] = inputTensor;
+    const inputTensor = new ort.Tensor('float32', float32Data, dims);
+    const feeds = { [inputName]: inputTensor };
 
     const inferenceStart = performance.now();
     const output = await session.run(feeds);
@@ -212,7 +228,6 @@ export default function App() {
 
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
-
     const isOOD = topMatch.rawProbability < 0.45;
 
     const scanRecord = {
@@ -237,7 +252,7 @@ export default function App() {
     };
 
     setCurrentResult(scanRecord);
-    setTelemetry({ nnLatency, totalLatency, isOOD });
+    setTelemetry({ nnLatency, totalLatency, isOOD, tensorShape: JSON.stringify(dims) });
 
     const updatedHistory = [scanRecord, ...history].slice(0, 15);
     setHistory(updatedHistory);
@@ -252,10 +267,10 @@ export default function App() {
 
     try {
       const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = 224;
-      canvas.height = 224;
-      const ctx = canvas.getContext('2d');
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = 224;
+      offCanvas.height = 224;
+      const ctx = offCanvas.getContext('2d');
 
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
@@ -266,7 +281,7 @@ export default function App() {
       const srcY = (vh - srcH) / 2;
 
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, 224, 224);
-      await runInferenceOnCanvas(canvas);
+      await runInferenceOnCanvas(offCanvas);
     } catch (err) {
       console.error(err);
       setErrorMessage(`Camera inference failed: ${err.message}`);
@@ -279,7 +294,6 @@ export default function App() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
-    // Reset previous states immediately for clear visual feedback
     setCurrentResult(null);
     setAnalyzing(true);
     setErrorMessage(null);
@@ -289,34 +303,30 @@ export default function App() {
       const img = new Image();
       img.onload = async () => {
         setPreviewImage(event.target.result);
-        const canvas = canvasRef.current;
-        if (!canvas) {
-          setErrorMessage("Canvas initialization error.");
-          setAnalyzing(false);
-          return;
-        }
-        canvas.width = 224;
-        canvas.height = 224;
-        const ctx = canvas.getContext('2d');
+
+        // Offscreen Canvas Execution (Prevents React DOM Ref Locks)
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = 224;
+        offCanvas.height = 224;
+        const ctx = offCanvas.getContext('2d');
         ctx.drawImage(img, 0, 0, 224, 224);
 
         try {
-          await runInferenceOnCanvas(canvas);
+          await runInferenceOnCanvas(offCanvas);
         } catch (err) {
+          console.error(err);
           setErrorMessage(`File inference failed: ${err.message}`);
         } finally {
           setAnalyzing(false);
         }
       };
       img.onerror = () => {
-        setErrorMessage("Invalid image file format. Please upload a PNG, JPG, or WEBP image.");
+        setErrorMessage("Invalid image format. Please upload a valid PNG, JPG, or WEBP file.");
         setAnalyzing(false);
       };
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
-
-    // Reset file input value after reading so selecting the same file triggers re-scan
     e.target.value = null;
   };
 
@@ -533,13 +543,13 @@ export default function App() {
                 onChange={handleFileUpload} 
               />
             </div>
-            
+
             <div style={styles.hamGuideNotice}>
-              💡 <strong>HAM10000 Image Standard:</strong> Upload magnified, close-up dermatoscopic photos of localized skin lesions for valid classification.
+              💡 <strong>HAM10000 Benchmark:</strong> Upload magnified dermatoscopic images centered on a skin lesion.
             </div>
           </div>
 
-          {/* Digital Target Zoom (Displayed ONLY in Live Camera Mode) */}
+          {/* Live Zoom Slider */}
           {inputMode === 'camera' && (
             <div style={styles.zoomControlBox}>
               <label style={styles.zoomLabel}>
@@ -560,7 +570,7 @@ export default function App() {
           <div style={styles.statusRow}>
             <span style={{ ...styles.statusDot, backgroundColor: session ? '#22c55e' : '#f59e0b' }} />
             <span style={styles.statusText}>
-              {analyzing ? "⌛ Running Neural Network Inference..." : status}
+              {analyzing ? "⌛ Running WASM Neural Network Inference..." : status}
             </span>
           </div>
 
@@ -570,7 +580,7 @@ export default function App() {
               disabled={loading || analyzing} 
               style={{ ...styles.scanButton, opacity: (loading || analyzing) ? 0.6 : 1 }}
             >
-              {analyzing ? "⌛ Executing WASM Neural Network..." : "⚡ Execute Edge Inference"}
+              {analyzing ? "⌛ Executing Neural Network..." : "⚡ Execute Edge Inference"}
             </button>
           )}
         </section>
@@ -587,12 +597,11 @@ export default function App() {
         {currentResult && (
           <section style={styles.card}>
             {currentResult.isOOD ? (
-              /* OUT-OF-DISTRIBUTION (OOD): ONLY DISPLAY OOD WARNING & RECOMMENDED NEXT STEPS */
               <div>
                 <div style={styles.oodBanner}>
                   <strong>⚠️ Out-of-Distribution / High Uncertainty Alert:</strong>
                   <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', lineHeight: '1.4' }}>
-                    Diagnostic confidence is below the 45% threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters (likely a vesicle, rash, blister, non-pigmented lesion, or non-skin object).
+                    Diagnostic confidence is below the 45% threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters.
                   </p>
                 </div>
 
@@ -609,7 +618,6 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              /* NORMAL IN-DISTRIBUTION RESULTS DISPLAY */
               <div>
                 <div style={styles.resultHeader}>
                   <div>
@@ -756,7 +764,7 @@ export default function App() {
         </section>
       )}
 
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
+      <canvas style={{ display: 'none' }} />
     </div>
   );
 }
