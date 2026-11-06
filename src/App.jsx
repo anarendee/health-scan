@@ -111,7 +111,7 @@ export default function App() {
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • Dynamic Tensor Pipeline Ready");
+        setStatus("v2.0 Engine Active • Normalized Tensor Pipeline");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
         setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
@@ -161,7 +161,7 @@ export default function App() {
     }
   };
 
-  // Fail-Safe Inference Pipeline with Auto Shape Detection (NCHW vs NHWC)
+  // Tensor Pipeline: Handles ImageNet Normalization & Intelligent Softmax Detection
   const runInferenceOnCanvas = async (sourceCanvas) => {
     if (!session) throw new Error("ONNX AI Model session is not ready.");
 
@@ -171,16 +171,22 @@ export default function App() {
 
     const inputName = session.inputNames[0];
     const inputMeta = session.inputMetadata ? session.inputMetadata[inputName] : null;
-    const dims = (inputMeta && inputMeta.dimensions) ? inputMeta.dimensions : [1, 224, 224, 3];
+    const dims = (inputMeta && inputMeta.dimensions && inputMeta.dimensions.length === 4) 
+      ? inputMeta.dimensions 
+      : [1, 224, 224, 3];
     
-    // Check if tensor layout is NCHW [1, 3, 224, 224] or NHWC [1, 224, 224, 3]
     const isNCHW = (dims[1] === 3);
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
+    // ImageNet Mean & Standard Deviation Coefficients
+    const mean = [0.485, 0.456, 0.406];
+    const std  = [0.229, 0.224, 0.225];
+
     for (let i = 0; i < 224 * 224; i++) {
-      const r = imgData[i * 4] / 255.0;
-      const g = imgData[i * 4 + 1] / 255.0;
-      const b = imgData[i * 4 + 2] / 255.0;
+      // Normalize pixel values to standard ImageNet space
+      const r = (imgData[i * 4] / 255.0 - mean[0]) / std[0];
+      const g = (imgData[i * 4 + 1] / 255.0 - mean[1]) / std[1];
+      const b = (imgData[i * 4 + 2] / 255.0 - mean[2]) / std[2];
 
       if (isNCHW) {
         float32Data[i] = r;
@@ -200,10 +206,20 @@ export default function App() {
     const output = await session.run(feeds);
     const inferenceEnd = performance.now();
 
-    const logits = output[session.outputNames[0]].data;
-    const expValues = Array.from(logits).map(v => Math.exp(v));
-    const sumExp = expValues.reduce((a, b) => a + b, 0);
-    const probs = expValues.map(v => v / sumExp);
+    const rawOutput = Array.from(output[session.outputNames[0]].data);
+    const sumRaw = rawOutput.reduce((a, b) => a + b, 0);
+
+    // Auto-detect if ONNX output is already Softmax probabilities (sum ≈ 1.0)
+    let probs;
+    if (Math.abs(sumRaw - 1.0) < 0.08 && rawOutput.every(v => v >= -0.01)) {
+      probs = rawOutput.map(v => Math.max(0, v));
+    } else {
+      // Raw Logits: Apply numerically stable Softmax
+      const maxLogit = Math.max(...rawOutput);
+      const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
+      const sumExp = expValues.reduce((a, b) => a + b, 0);
+      probs = expValues.map(v => v / sumExp);
+    }
 
     const differentialDiagnosis = Object.keys(CLASS_METADATA).map((idx) => {
       const classId = parseInt(idx, 10);
@@ -228,7 +244,9 @@ export default function App() {
 
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
-    const isOOD = topMatch.rawProbability < 0.45;
+
+    // Out-of-Distribution (<35% threshold for normalized models)
+    const isOOD = topMatch.rawProbability < 0.35;
 
     const scanRecord = {
       id: Date.now(),
@@ -252,7 +270,7 @@ export default function App() {
     };
 
     setCurrentResult(scanRecord);
-    setTelemetry({ nnLatency, totalLatency, isOOD, tensorShape: JSON.stringify(dims) });
+    setTelemetry({ nnLatency, totalLatency, isOOD });
 
     const updatedHistory = [scanRecord, ...history].slice(0, 15);
     setHistory(updatedHistory);
@@ -304,7 +322,6 @@ export default function App() {
       img.onload = async () => {
         setPreviewImage(event.target.result);
 
-        // Offscreen Canvas Execution (Prevents React DOM Ref Locks)
         const offCanvas = document.createElement('canvas');
         offCanvas.width = 224;
         offCanvas.height = 224;
@@ -601,7 +618,7 @@ export default function App() {
                 <div style={styles.oodBanner}>
                   <strong>⚠️ Out-of-Distribution / High Uncertainty Alert:</strong>
                   <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', lineHeight: '1.4' }}>
-                    Diagnostic confidence is below the 45% threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters.
+                    Diagnostic confidence is below the threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters.
                   </p>
                 </div>
 
