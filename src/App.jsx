@@ -98,7 +98,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('scanner');
   const [inputMode, setInputMode] = useState('camera'); 
   const [previewImage, setPreviewImage] = useState(null);
-  const [zoomScale, setZoomScale] = useState(1.0);
+  const [zoomScale, setZoomScale] = useState(1.0); // Digital zoom state for camera
 
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -215,7 +215,7 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Out-of-Distribution (<45% certainty) Flag
+    // Out-of-Distribution (<45% certainty threshold)
     const isOOD = topMatch.rawProbability < 0.45;
 
     const scanRecord = {
@@ -233,7 +233,7 @@ export default function App() {
       confidence: topMatch.probabilityPercentage,
       differentialDiagnosis,
       isOOD,
-      zoomScale: `${zoomScale}x`,
+      zoomScale: inputMode === 'camera' ? `${zoomScale}x` : '1.0x',
       imageSnapshot,
       nnLatency,
       totalLatency
@@ -259,10 +259,14 @@ export default function App() {
       canvas.height = 224;
       const ctx = canvas.getContext('2d');
 
-      const srcW = video.videoWidth / zoomScale;
-      const srcH = video.videoHeight / zoomScale;
-      const srcX = (video.videoWidth - srcW) / 2;
-      const srcY = (video.videoHeight - srcH) / 2;
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+
+      // Center crop calculation scaled by digital zoom
+      const srcW = vw / zoomScale;
+      const srcH = vh / zoomScale;
+      const srcX = (vw - srcW) / 2;
+      const srcY = (vh - srcH) / 2;
 
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, 224, 224);
       await runInferenceOnCanvas(canvas);
@@ -291,12 +295,8 @@ export default function App() {
         canvas.height = 224;
         const ctx = canvas.getContext('2d');
 
-        const srcW = img.width / zoomScale;
-        const srcH = img.height / zoomScale;
-        const srcX = (img.width - srcW) / 2;
-        const srcY = (img.height - srcH) / 2;
-
-        ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, 224, 224);
+        // Draw full image directly without digital zoom
+        ctx.drawImage(img, 0, 0, 224, 224);
 
         try {
           await runInferenceOnCanvas(canvas);
@@ -312,7 +312,7 @@ export default function App() {
   };
 
   const generatePDFReport = () => {
-    if (!currentResult) return;
+    if (!currentResult || currentResult.isOOD) return;
 
     const reportWindow = window.open('', '_blank');
     const diffRows = currentResult.differentialDiagnosis.map((item, i) => `
@@ -337,7 +337,6 @@ export default function App() {
           .grid { display: flex; gap: 20px; align-items: center; }
           .snapshot { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 1px solid #cbd5e1; }
           .badge { display: inline-block; padding: 4px 10px; color: white; background: ${currentResult.color}; font-weight: bold; border-radius: 4px; font-size: 12px; }
-          .ood-warning { background: #fff7ed; border-left: 4px solid #ea580c; color: #9a3412; padding: 10px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; }
           .field-label { font-weight: bold; color: #334155; font-size: 13px; }
           .field-value { font-size: 13px; color: #475569; margin-top: 2px; }
           table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
@@ -354,12 +353,6 @@ export default function App() {
           </div>
           <div><span class="badge">${currentResult.riskLevel}</span></div>
         </div>
-
-        ${currentResult.isOOD ? `
-          <div class="ood-warning">
-            <strong>⚠️ Out-of-Distribution (OOD) Alert:</strong> Top diagnostic probability is under 45% threshold (${currentResult.confidence}%). Target may be an unclassified lesion, rash, vesicle, or non-dermatoscopic input.
-          </div>
-        ` : ''}
 
         <div class="section">
           <div class="grid">
@@ -402,7 +395,7 @@ export default function App() {
         </div>
 
         <div class="footer">
-          Institutional Protocol Notice: On-device screening evaluation output generated via MobileNetV3 WASM (v2.0 OOD System). Not a substitute for histopathological biopsy. | Network Transferred: 0 KB
+          Institutional Protocol Notice: On-device screening evaluation output generated via MobileNetV3 WASM (v2.0 System). Not a substitute for histopathological biopsy. | Network Transferred: 0 KB
         </div>
         <script>
           window.onload = function() { window.print(); }
@@ -478,10 +471,21 @@ export default function App() {
         </div>
 
         <section style={styles.card}>
-          {/* Persistent Video Container */}
+          {/* Live Camera Viewport */}
           <div style={{ display: inputMode === 'camera' ? 'block' : 'none' }}>
             <div style={styles.videoWrapper}>
-              <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                style={{
+                  ...styles.video,
+                  transform: `scale(${zoomScale})`,
+                  transformOrigin: 'center center',
+                  transition: 'transform 0.15s ease'
+                }} 
+              />
               <div style={styles.reticle}>
                 <div style={styles.reticleCrosshair}></div>
               </div>
@@ -497,7 +501,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Persistent File Container */}
+          {/* Upload Dropzone */}
           <div style={{ display: inputMode === 'file' ? 'block' : 'none' }}>
             <div style={styles.uploadDropzone} onClick={() => fileInputRef.current.click()}>
               {previewImage ? (
@@ -519,20 +523,23 @@ export default function App() {
             </div>
           </div>
 
-          <div style={styles.zoomControlBox}>
-            <label style={styles.zoomLabel}>
-              🔍 Digital Target Zoom: <strong>{zoomScale.toFixed(1)}x</strong>
-            </label>
-            <input 
-              type="range" 
-              min="1.0" 
-              max="3.0" 
-              step="0.1" 
-              value={zoomScale} 
-              onChange={(e) => setZoomScale(parseFloat(e.target.value))}
-              style={styles.zoomSlider} 
-            />
-          </div>
+          {/* Digital Target Zoom (Displayed ONLY in Live Camera Mode) */}
+          {inputMode === 'camera' && (
+            <div style={styles.zoomControlBox}>
+              <label style={styles.zoomLabel}>
+                🔍 Live Target Zoom: <strong>{zoomScale.toFixed(1)}x</strong>
+              </label>
+              <input 
+                type="range" 
+                min="1.0" 
+                max="3.0" 
+                step="0.1" 
+                value={zoomScale} 
+                onChange={(e) => setZoomScale(parseFloat(e.target.value))}
+                style={styles.zoomSlider} 
+              />
+            </div>
+          )}
 
           <div style={styles.statusRow}>
             <span style={{ ...styles.statusDot, backgroundColor: session ? '#22c55e' : '#f59e0b' }} />
@@ -558,92 +565,111 @@ export default function App() {
           </div>
         )}
 
+        {/* RESULTS SECTION */}
         {currentResult && (
           <section style={styles.card}>
-            {currentResult.isOOD && (
-              <div style={styles.oodBanner}>
-                <strong>⚠️ Out-of-Distribution / High Uncertainty Warning:</strong>
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem' }}>
-                  Top probability is below 45% certainty ({currentResult.confidence}%). The target may be a non-dermatoscopic input, rash, vesicle, or blister outside the HAM10000 benchmark dataset.
-                </p>
+            {currentResult.isOOD ? (
+              /* OUT-OF-DISTRIBUTION (OOD): ONLY DISPLAY OOD WARNING & RECOMMENDED NEXT STEPS */
+              <div>
+                <div style={styles.oodBanner}>
+                  <strong>⚠️ Out-of-Distribution / High Uncertainty Alert:</strong>
+                  <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', lineHeight: '1.4' }}>
+                    Diagnostic confidence is below the 45% threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters (likely a vesicle, rash, blister, non-pigmented lesion, or non-skin object).
+                  </p>
+                </div>
+
+                <div style={{ ...styles.actionBox, borderColor: '#ea580c', backgroundColor: '#fff7ed', marginTop: '12px' }}>
+                  <strong style={{ color: '#c2410c' }}>🩺 Recommended Next Steps:</strong>
+                  <p style={{ ...styles.actionText, color: '#9a3412' }}>
+                    Consult a qualified dermatologist or general practitioner for a direct physical clinical examination. Machine learning triage models cannot produce valid diagnostic classifications for out-of-domain cutaneous manifestations.
+                  </p>
+                </div>
+
+                <div style={styles.metaFooter}>
+                  <span>OOD Guardrail Active</span>
+                  <span>Timestamp: {currentResult.timestamp}</span>
+                </div>
+              </div>
+            ) : (
+              /* NORMAL IN-DISTRIBUTION RESULTS DISPLAY */
+              <div>
+                <div style={styles.resultHeader}>
+                  <div>
+                    <span style={styles.categoryTag}>{currentResult.category}</span>
+                    <h2 style={styles.resultName}>{currentResult.label}</h2>
+                  </div>
+                  <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
+                    {currentResult.riskLevel}
+                  </span>
+                </div>
+
+                <div style={styles.infoSection}>
+                  <strong style={styles.infoTitle}>📖 Condition Profile:</strong>
+                  <p style={styles.descriptionText}>{currentResult.description}</p>
+                </div>
+
+                <div style={styles.meterContainer}>
+                  <div style={styles.meterHeader}>
+                    <span>Primary Probability</span>
+                    <strong>{currentResult.confidence}%</strong>
+                  </div>
+                  <div style={styles.progressBarBackground}>
+                    <div 
+                      style={{ 
+                        ...styles.progressBarFill, 
+                        width: `${currentResult.confidence}%`, 
+                        backgroundColor: currentResult.color 
+                      }} 
+                    />
+                  </div>
+                </div>
+
+                <div style={styles.differentialBox}>
+                  <strong style={styles.infoTitle}>📊 Full 7-Class Differential Diagnosis Breakdown:</strong>
+                  <div style={styles.differentialList}>
+                    {currentResult.differentialDiagnosis.map((item) => (
+                      <div key={item.id} style={styles.diffRow}>
+                        <div style={styles.diffLabelGroup}>
+                          <span style={{ fontWeight: '700', color: item.color }}>{item.name}</span>
+                          <span style={styles.diffCode}>({item.code})</span>
+                        </div>
+                        <div style={styles.diffBarGroup}>
+                          <div style={styles.diffBarBg}>
+                            <div style={{ ...styles.diffBarFill, width: `${item.probabilityPercentage}%`, backgroundColor: item.color }} />
+                          </div>
+                          <span style={styles.diffVal}>{item.probabilityPercentage}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
+                  <strong style={{ color: currentResult.color }}>🩺 Recommended Next Steps:</strong>
+                  <p style={styles.actionText}>{currentResult.action}</p>
+                </div>
+
+                <div style={styles.treatmentBox}>
+                  <strong>💊 Standard Medical Management:</strong>
+                  <p style={styles.treatmentText}>{currentResult.treatment}</p>
+                </div>
+
+                <div style={styles.linkContainer}>
+                  <a href={currentResult.link} target="_blank" rel="noopener noreferrer" style={styles.referenceLink}>
+                    🔗 Read Clinical Medical Reference (Mayo Clinic / DermNet) →
+                  </a>
+                </div>
+
+                <button onClick={generatePDFReport} style={styles.pdfButton}>
+                  📄 Export v2.0 Differential Consultation PDF
+                </button>
+
+                <div style={styles.metaFooter}>
+                  <span>HAM10000 Benchmark Class</span>
+                  <span>Zoom: {currentResult.zoomScale} • {currentResult.timestamp}</span>
+                </div>
               </div>
             )}
-
-            <div style={styles.resultHeader}>
-              <div>
-                <span style={styles.categoryTag}>{currentResult.category}</span>
-                <h2 style={styles.resultName}>{currentResult.label}</h2>
-              </div>
-              <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
-                {currentResult.riskLevel}
-              </span>
-            </div>
-
-            <div style={styles.infoSection}>
-              <strong style={styles.infoTitle}>📖 Condition Profile:</strong>
-              <p style={styles.descriptionText}>{currentResult.description}</p>
-            </div>
-
-            <div style={styles.meterContainer}>
-              <div style={styles.meterHeader}>
-                <span>Primary Probability</span>
-                <strong>{currentResult.confidence}%</strong>
-              </div>
-              <div style={styles.progressBarBackground}>
-                <div 
-                  style={{ 
-                    ...styles.progressBarFill, 
-                    width: `${currentResult.confidence}%`, 
-                    backgroundColor: currentResult.color 
-                  }} 
-                />
-              </div>
-            </div>
-
-            <div style={styles.differentialBox}>
-              <strong style={styles.infoTitle}>📊 Full 7-Class Differential Diagnosis Breakdown:</strong>
-              <div style={styles.differentialList}>
-                {currentResult.differentialDiagnosis.map((item) => (
-                  <div key={item.id} style={styles.diffRow}>
-                    <div style={styles.diffLabelGroup}>
-                      <span style={{ fontWeight: '700', color: item.color }}>{item.name}</span>
-                      <span style={styles.diffCode}>({item.code})</span>
-                    </div>
-                    <div style={styles.diffBarGroup}>
-                      <div style={styles.diffBarBg}>
-                        <div style={{ ...styles.diffBarFill, width: `${item.probabilityPercentage}%`, backgroundColor: item.color }} />
-                      </div>
-                      <span style={styles.diffVal}>{item.probabilityPercentage}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
-              <strong style={{ color: currentResult.color }}>🩺 Recommended Next Steps:</strong>
-              <p style={styles.actionText}>{currentResult.action}</p>
-            </div>
-
-            <div style={styles.treatmentBox}>
-              <strong>💊 Standard Medical Management:</strong>
-              <p style={styles.treatmentText}>{currentResult.treatment}</p>
-            </div>
-
-            <div style={styles.linkContainer}>
-              <a href={currentResult.link} target="_blank" rel="noopener noreferrer" style={styles.referenceLink}>
-                🔗 Read Clinical Medical Reference (Mayo Clinic / DermNet) →
-              </a>
-            </div>
-
-            <button onClick={generatePDFReport} style={styles.pdfButton}>
-              📄 Export v2.0 Differential Consultation PDF
-            </button>
-
-            <div style={styles.metaFooter}>
-              <span>HAM10000 Benchmark Class</span>
-              <span>Zoom: {currentResult.zoomScale} • {currentResult.timestamp}</span>
-            </div>
           </section>
         )}
       </main>
@@ -728,7 +754,7 @@ const styles = {
   tabBtn: { background: 'none', border: 'none', padding: '8px 12px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
   disclaimer: { backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', padding: '10px 12px', borderRadius: '6px', fontSize: '0.75rem', color: '#78350f', marginBottom: '14px', lineHeight: '1.4' },
   errorBox: { backgroundColor: '#fee2e2', borderLeft: '4px solid #ef4444', padding: '10px 12px', borderRadius: '6px', fontSize: '0.78rem', color: '#991b1b', marginBottom: '14px', lineHeight: '1.4' },
-  oodBanner: { backgroundColor: '#fff7ed', borderLeft: '4px solid #ea580c', color: '#9a3412', padding: '10px 12px', borderRadius: '6px', fontSize: '0.78rem', marginBottom: '12px', lineHeight: '1.4' },
+  oodBanner: { backgroundColor: '#fff7ed', borderLeft: '4px solid #ea580c', color: '#9a3412', padding: '12px', borderRadius: '6px', fontSize: '0.82rem', lineHeight: '1.4' },
   modeToggleRow: { display: 'flex', gap: '8px', marginBottom: '8px' },
   modeBtn: { flex: 1, padding: '8px', borderRadius: '6px', border: 'none', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' },
   grid: { flexDirection: 'column', gap: '14px' },
@@ -776,7 +802,7 @@ const styles = {
   linkContainer: { marginBottom: '12px' },
   referenceLink: { color: '#2563eb', fontSize: '0.78rem', fontWeight: '600', textDecoration: 'none' },
   pdfButton: { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #2563eb', backgroundColor: '#eff6ff', color: '#2563eb', fontWeight: '700', fontSize: '0.82rem', cursor: 'pointer', marginBottom: '12px' },
-  metaFooter: { display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94a3b8', borderTop: '1px solid #f1f5f9', paddingTop: '8px' },
+  metaFooter: { display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94a3b8', borderTop: '1px solid #f1f5f9', paddingTop: '8px', marginTop: '8px' },
   cardTitle: { fontSize: '1rem', fontWeight: '700', margin: '0 0 12px 0', color: '#0f172a' },
   historyHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' },
   clearBtn: { backgroundColor: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.78rem', cursor: 'pointer', fontWeight: '700' },
