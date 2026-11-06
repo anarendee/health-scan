@@ -111,7 +111,7 @@ export default function App() {
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • Normalized Tensor Pipeline");
+        setStatus("v2.0 Engine Active • CDSS Diagnostics Ready");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
         setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
@@ -161,7 +161,6 @@ export default function App() {
     }
   };
 
-  // Tensor Pipeline: Handles ImageNet Normalization & Intelligent Softmax Detection
   const runInferenceOnCanvas = async (sourceCanvas) => {
     if (!session) throw new Error("ONNX AI Model session is not ready.");
 
@@ -178,12 +177,10 @@ export default function App() {
     const isNCHW = (dims[1] === 3);
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
-    // ImageNet Mean & Standard Deviation Coefficients
     const mean = [0.485, 0.456, 0.406];
     const std  = [0.229, 0.224, 0.225];
 
     for (let i = 0; i < 224 * 224; i++) {
-      // Normalize pixel values to standard ImageNet space
       const r = (imgData[i * 4] / 255.0 - mean[0]) / std[0];
       const g = (imgData[i * 4 + 1] / 255.0 - mean[1]) / std[1];
       const b = (imgData[i * 4 + 2] / 255.0 - mean[2]) / std[2];
@@ -209,12 +206,10 @@ export default function App() {
     const rawOutput = Array.from(output[session.outputNames[0]].data);
     const sumRaw = rawOutput.reduce((a, b) => a + b, 0);
 
-    // Auto-detect if ONNX output is already Softmax probabilities (sum ≈ 1.0)
     let probs;
     if (Math.abs(sumRaw - 1.0) < 0.08 && rawOutput.every(v => v >= -0.01)) {
       probs = rawOutput.map(v => Math.max(0, v));
     } else {
-      // Raw Logits: Apply numerically stable Softmax
       const maxLogit = Math.max(...rawOutput);
       const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
       const sumExp = expValues.reduce((a, b) => a + b, 0);
@@ -245,8 +240,8 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Out-of-Distribution (<35% threshold for normalized models)
-    const isOOD = topMatch.rawProbability < 0.35;
+    // Advisory low-confidence threshold (< 25%)
+    const isOOD = topMatch.rawProbability < 0.25;
 
     const scanRecord = {
       id: Date.now(),
@@ -348,7 +343,7 @@ export default function App() {
   };
 
   const generatePDFReport = () => {
-    if (!currentResult || currentResult.isOOD) return;
+    if (!currentResult) return;
 
     const reportWindow = window.open('', '_blank');
     const diffRows = currentResult.differentialDiagnosis.map((item, i) => `
@@ -548,7 +543,7 @@ export default function App() {
               ) : (
                 <div style={styles.uploadPlaceholder}>
                   <span style={{ fontSize: '2rem' }}>📁</span>
-                  <strong>Click or Drag HAM10000 Image Here</strong>
+                  <strong>Click or Drag Image File Here</strong>
                   <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Supports PNG, JPG, JPEG, WEBP</span>
                 </div>
               )}
@@ -606,113 +601,98 @@ export default function App() {
           <div style={styles.telemetryBar}>
             <div>⚡ <strong>Inference:</strong> {telemetry.nnLatency} ms</div>
             <div>⏱️ <strong>Pipeline:</strong> {telemetry.totalLatency} ms</div>
-            <div>🛡️ <strong>OOD Shield:</strong> {telemetry.isOOD ? '⚠️ Triggered' : '✅ Clear'}</div>
+            <div>🛡️ <strong>OOD Shield:</strong> {telemetry.isOOD ? '⚠️ Advisory' : '✅ Clear'}</div>
           </div>
         )}
 
-        {/* RESULTS SECTION */}
+        {/* DIAGNOSTIC RESULTS SECTION - ALWAYS RENDERS UPON SCAN */}
         {currentResult && (
           <section style={styles.card}>
-            {currentResult.isOOD ? (
-              <div>
-                <div style={styles.oodBanner}>
-                  <strong>⚠️ Out-of-Distribution / High Uncertainty Alert:</strong>
-                  <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', lineHeight: '1.4' }}>
-                    Diagnostic confidence is below the threshold ({currentResult.confidence}% certainty). The target image does not match the HAM10000 benchmark dataset parameters.
-                  </p>
-                </div>
-
-                <div style={{ ...styles.actionBox, borderColor: '#ea580c', backgroundColor: '#fff7ed', marginTop: '12px' }}>
-                  <strong style={{ color: '#c2410c' }}>🩺 Recommended Next Steps:</strong>
-                  <p style={{ ...styles.actionText, color: '#9a3412' }}>
-                    Consult a qualified dermatologist or general practitioner for a direct physical clinical examination. Machine learning triage models cannot produce valid diagnostic classifications for out-of-domain cutaneous manifestations.
-                  </p>
-                </div>
-
-                <div style={styles.metaFooter}>
-                  <span>OOD Guardrail Active</span>
-                  <span>Timestamp: {currentResult.timestamp}</span>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div style={styles.resultHeader}>
-                  <div>
-                    <span style={styles.categoryTag}>{currentResult.category}</span>
-                    <h2 style={styles.resultName}>{currentResult.label}</h2>
-                  </div>
-                  <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
-                    {currentResult.riskLevel}
-                  </span>
-                </div>
-
-                <div style={styles.infoSection}>
-                  <strong style={styles.infoTitle}>📖 Condition Profile:</strong>
-                  <p style={styles.descriptionText}>{currentResult.description}</p>
-                </div>
-
-                <div style={styles.meterContainer}>
-                  <div style={styles.meterHeader}>
-                    <span>Primary Probability</span>
-                    <strong>{currentResult.confidence}%</strong>
-                  </div>
-                  <div style={styles.progressBarBackground}>
-                    <div 
-                      style={{ 
-                        ...styles.progressBarFill, 
-                        width: `${currentResult.confidence}%`, 
-                        backgroundColor: currentResult.color 
-                      }} 
-                    />
-                  </div>
-                </div>
-
-                <div style={styles.differentialBox}>
-                  <strong style={styles.infoTitle}>📊 Full 7-Class Differential Diagnosis Breakdown:</strong>
-                  <div style={styles.differentialList}>
-                    {currentResult.differentialDiagnosis.map((item) => (
-                      <div key={item.id} style={styles.diffRow}>
-                        <div style={styles.diffLabelGroup}>
-                          <span style={{ fontWeight: '700', color: item.color }}>{item.name}</span>
-                          <span style={styles.diffCode}>({item.code})</span>
-                        </div>
-                        <div style={styles.diffBarGroup}>
-                          <div style={styles.diffBarBg}>
-                            <div style={{ ...styles.diffBarFill, width: `${item.probabilityPercentage}%`, backgroundColor: item.color }} />
-                          </div>
-                          <span style={styles.diffVal}>{item.probabilityPercentage}%</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
-                  <strong style={{ color: currentResult.color }}>🩺 Recommended Next Steps:</strong>
-                  <p style={styles.actionText}>{currentResult.action}</p>
-                </div>
-
-                <div style={styles.treatmentBox}>
-                  <strong>💊 Standard Medical Management:</strong>
-                  <p style={styles.treatmentText}>{currentResult.treatment}</p>
-                </div>
-
-                <div style={styles.linkContainer}>
-                  <a href={currentResult.link} target="_blank" rel="noopener noreferrer" style={styles.referenceLink}>
-                    🔗 Read Clinical Medical Reference (Mayo Clinic / DermNet) →
-                  </a>
-                </div>
-
-                <button onClick={generatePDFReport} style={styles.pdfButton}>
-                  📄 Export v2.0 Differential Consultation PDF
-                </button>
-
-                <div style={styles.metaFooter}>
-                  <span>HAM10000 Benchmark Class</span>
-                  <span>Zoom: {currentResult.zoomScale} • {currentResult.timestamp}</span>
-                </div>
+            {/* Low-Confidence / OOD Advisory Banner (Displayed at top if confidence < 25%) */}
+            {currentResult.isOOD && (
+              <div style={styles.oodBanner}>
+                <strong>⚠️ Low Confidence Advisory Notice:</strong>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', lineHeight: '1.4' }}>
+                  Top probability is below 25% certainty ({currentResult.confidence}%). Review the full differential matrix below for secondary diagnostic probabilities.
+                </p>
               </div>
             )}
+
+            <div style={styles.resultHeader}>
+              <div>
+                <span style={styles.categoryTag}>{currentResult.category}</span>
+                <h2 style={styles.resultName}>{currentResult.label}</h2>
+              </div>
+              <span style={{ ...styles.riskBadge, backgroundColor: currentResult.color }}>
+                {currentResult.riskLevel}
+              </span>
+            </div>
+
+            <div style={styles.infoSection}>
+              <strong style={styles.infoTitle}>📖 Condition Profile:</strong>
+              <p style={styles.descriptionText}>{currentResult.description}</p>
+            </div>
+
+            <div style={styles.meterContainer}>
+              <div style={styles.meterHeader}>
+                <span>Primary Probability</span>
+                <strong>{currentResult.confidence}%</strong>
+              </div>
+              <div style={styles.progressBarBackground}>
+                <div 
+                  style={{ 
+                    ...styles.progressBarFill, 
+                    width: `${currentResult.confidence}%`, 
+                    backgroundColor: currentResult.color 
+                  }} 
+                />
+              </div>
+            </div>
+
+            <div style={styles.differentialBox}>
+              <strong style={styles.infoTitle}>📊 Full 7-Class Differential Diagnosis Breakdown:</strong>
+              <div style={styles.differentialList}>
+                {currentResult.differentialDiagnosis.map((item) => (
+                  <div key={item.id} style={styles.diffRow}>
+                    <div style={styles.diffLabelGroup}>
+                      <span style={{ fontWeight: '700', color: item.color }}>{item.name}</span>
+                      <span style={styles.diffCode}>({item.code})</span>
+                    </div>
+                    <div style={styles.diffBarGroup}>
+                      <div style={styles.diffBarBg}>
+                        <div style={{ ...styles.diffBarFill, width: `${item.probabilityPercentage}%`, backgroundColor: item.color }} />
+                      </div>
+                      <span style={styles.diffVal}>{item.probabilityPercentage}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ ...styles.actionBox, borderColor: currentResult.color }}>
+              <strong style={{ color: currentResult.color }}>🩺 Recommended Next Steps:</strong>
+              <p style={styles.actionText}>{currentResult.action}</p>
+            </div>
+
+            <div style={styles.treatmentBox}>
+              <strong>💊 Standard Medical Management:</strong>
+              <p style={styles.treatmentText}>{currentResult.treatment}</p>
+            </div>
+
+            <div style={styles.linkContainer}>
+              <a href={currentResult.link} target="_blank" rel="noopener noreferrer" style={styles.referenceLink}>
+                🔗 Read Clinical Medical Reference (Mayo Clinic / DermNet) →
+              </a>
+            </div>
+
+            <button onClick={generatePDFReport} style={styles.pdfButton}>
+              📄 Export v2.0 Differential Consultation PDF
+            </button>
+
+            <div style={styles.metaFooter}>
+              <span>HAM10000 Benchmark Class</span>
+              <span>Zoom: {currentResult.zoomScale} • {currentResult.timestamp}</span>
+            </div>
           </section>
         )}
       </main>
@@ -736,7 +716,7 @@ export default function App() {
                   <div>
                     <strong style={{ color: item.color }}>{item.label}</strong>
                     <div style={styles.historySub}>
-                      {item.date} • {item.timestamp} • {item.isOOD ? '⚠️ OOD Flagged' : 'Normal'}
+                      {item.date} • {item.timestamp} • {item.isOOD ? '⚠️ Advisory' : 'Normal'}
                     </div>
                   </div>
                   <div style={styles.historyRight}>
@@ -797,7 +777,7 @@ const styles = {
   tabBtn: { background: 'none', border: 'none', padding: '8px 12px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
   disclaimer: { backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', padding: '10px 12px', borderRadius: '6px', fontSize: '0.75rem', color: '#78350f', marginBottom: '14px', lineHeight: '1.4' },
   errorBox: { backgroundColor: '#fee2e2', borderLeft: '4px solid #ef4444', padding: '10px 12px', borderRadius: '6px', fontSize: '0.78rem', color: '#991b1b', marginBottom: '14px', lineHeight: '1.4' },
-  oodBanner: { backgroundColor: '#fff7ed', borderLeft: '4px solid #ea580c', color: '#9a3412', padding: '12px', borderRadius: '6px', fontSize: '0.82rem', lineHeight: '1.4' },
+  oodBanner: { backgroundColor: '#fff7ed', borderLeft: '4px solid #ea580c', color: '#9a3412', padding: '10px 12px', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '14px', lineHeight: '1.4' },
   modeToggleRow: { display: 'flex', gap: '8px', marginBottom: '8px' },
   modeBtn: { flex: 1, padding: '8px', borderRadius: '6px', border: 'none', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' },
   grid: { flexDirection: 'column', gap: '14px' },
