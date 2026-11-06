@@ -248,6 +248,7 @@ export default function App() {
     if (!videoRef.current) return;
     setAnalyzing(true);
     setErrorMessage(null);
+    setCurrentResult(null);
 
     try {
       const video = videoRef.current;
@@ -278,9 +279,8 @@ export default function App() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
-    // Reset input value so future file selections always trigger onChange
-    e.target.value = '';
-
+    // Reset previous states immediately for clear visual feedback
+    setCurrentResult(null);
     setAnalyzing(true);
     setErrorMessage(null);
 
@@ -290,10 +290,14 @@ export default function App() {
       img.onload = async () => {
         setPreviewImage(event.target.result);
         const canvas = canvasRef.current;
+        if (!canvas) {
+          setErrorMessage("Canvas initialization error.");
+          setAnalyzing(false);
+          return;
+        }
         canvas.width = 224;
         canvas.height = 224;
         const ctx = canvas.getContext('2d');
-
         ctx.drawImage(img, 0, 0, 224, 224);
 
         try {
@@ -304,9 +308,16 @@ export default function App() {
           setAnalyzing(false);
         }
       };
+      img.onerror = () => {
+        setErrorMessage("Invalid image file format. Please upload a PNG, JPG, or WEBP image.");
+        setAnalyzing(false);
+      };
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
+
+    // Reset file input value after reading so selecting the same file triggers re-scan
+    e.target.value = null;
   };
 
   const generatePDFReport = () => {
@@ -510,7 +521,7 @@ export default function App() {
               ) : (
                 <div style={styles.uploadPlaceholder}>
                   <span style={{ fontSize: '2rem' }}>📁</span>
-                  <strong>Click or Drag Image File Here</strong>
+                  <strong>Click or Drag HAM10000 Image Here</strong>
                   <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Supports PNG, JPG, JPEG, WEBP</span>
                 </div>
               )}
@@ -521,6 +532,10 @@ export default function App() {
                 style={{ display: 'none' }} 
                 onChange={handleFileUpload} 
               />
+            </div>
+            
+            <div style={styles.hamGuideNotice}>
+              💡 <strong>HAM10000 Image Standard:</strong> Upload magnified, close-up dermatoscopic photos of localized skin lesions for valid classification.
             </div>
           </div>
 
@@ -544,7 +559,9 @@ export default function App() {
 
           <div style={styles.statusRow}>
             <span style={{ ...styles.statusDot, backgroundColor: session ? '#22c55e' : '#f59e0b' }} />
-            <span style={styles.statusText}>{status}</span>
+            <span style={styles.statusText}>
+              {analyzing ? "⌛ Running Neural Network Inference..." : status}
+            </span>
           </div>
 
           {inputMode === 'camera' && (
@@ -765,11 +782,12 @@ const styles = {
   reticle: { position: 'absolute', top: '50%', left: '50%', width: '150px', height: '150px', transform: 'translate(-50%, -50%)', border: '2px dashed rgba(255, 255, 255, 0.85)', borderRadius: '14px', pointerEvents: 'none' },
   reticleCrosshair: { position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', transform: 'translate(-50%, -50%)', borderRadius: '50%', backgroundColor: 'rgba(59, 130, 246, 0.8)' },
   torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
-  uploadDropzone: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '16px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8fafc', minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  uploadDropzone: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '16px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8fafc', minHeight: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   uploadPlaceholder: { display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' },
   uploadPreviewContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' },
   previewImg: { maxHeight: '170px', maxWidth: '100%', borderRadius: '8px', objectFit: 'contain' },
   reUploadTag: { fontSize: '0.75rem', fontWeight: '700', color: '#2563eb', backgroundColor: '#eff6ff', padding: '4px 10px', borderRadius: '12px', border: '1px solid #bfdbfe' },
+  hamGuideNotice: { fontSize: '0.72rem', color: '#475569', backgroundColor: '#f1f5f9', padding: '6px 10px', borderRadius: '6px', marginTop: '8px' },
   zoomControlBox: { marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' },
   zoomLabel: { fontSize: '0.78rem', color: '#475569' },
   zoomSlider: { width: '100%', cursor: 'pointer' },
