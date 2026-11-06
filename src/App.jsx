@@ -98,7 +98,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('scanner');
   const [inputMode, setInputMode] = useState('camera'); 
   const [previewImage, setPreviewImage] = useState(null);
-  const [zoomScale, setZoomScale] = useState(1.0); // Digital zoom state for camera
+  const [zoomScale, setZoomScale] = useState(1.0);
 
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -169,7 +169,6 @@ export default function App() {
     const ctx = sourceCanvas.getContext('2d');
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
 
-    // NHWC Float32 Tensor Layout [1, 224, 224, 3]
     const float32Data = new Float32Array(1 * 224 * 224 * 3);
     for (let i = 0; i < 224 * 224; i++) {
       float32Data[i * 3]     = imgData[i * 4] / 255.0;     // Red
@@ -190,7 +189,6 @@ export default function App() {
     const sumExp = expValues.reduce((a, b) => a + b, 0);
     const probs = expValues.map(v => v / sumExp);
 
-    // 7-Class Differential Diagnosis Matrix
     const differentialDiagnosis = Object.keys(CLASS_METADATA).map((idx) => {
       const classId = parseInt(idx, 10);
       const meta = CLASS_METADATA[classId];
@@ -215,7 +213,6 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Out-of-Distribution (<45% certainty threshold)
     const isOOD = topMatch.rawProbability < 0.45;
 
     const scanRecord = {
@@ -262,7 +259,6 @@ export default function App() {
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      // Center crop calculation scaled by digital zoom
       const srcW = vw / zoomScale;
       const srcH = vh / zoomScale;
       const srcX = (vw - srcW) / 2;
@@ -282,6 +278,9 @@ export default function App() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
+    // Reset input value so future file selections always trigger onChange
+    e.target.value = '';
+
     setAnalyzing(true);
     setErrorMessage(null);
 
@@ -295,7 +294,6 @@ export default function App() {
         canvas.height = 224;
         const ctx = canvas.getContext('2d');
 
-        // Draw full image directly without digital zoom
         ctx.drawImage(img, 0, 0, 224, 224);
 
         try {
@@ -503,9 +501,12 @@ export default function App() {
 
           {/* Upload Dropzone */}
           <div style={{ display: inputMode === 'file' ? 'block' : 'none' }}>
-            <div style={styles.uploadDropzone} onClick={() => fileInputRef.current.click()}>
+            <div style={styles.uploadDropzone} onClick={() => fileInputRef.current && fileInputRef.current.click()}>
               {previewImage ? (
-                <img src={previewImage} alt="Uploaded sample" style={styles.previewImg} />
+                <div style={styles.uploadPreviewContainer}>
+                  <img src={previewImage} alt="Uploaded sample" style={styles.previewImg} />
+                  <span style={styles.reUploadTag}>🔄 Click to Select / Replace Image</span>
+                </div>
               ) : (
                 <div style={styles.uploadPlaceholder}>
                   <span style={{ fontSize: '2rem' }}>📁</span>
@@ -764,9 +765,11 @@ const styles = {
   reticle: { position: 'absolute', top: '50%', left: '50%', width: '150px', height: '150px', transform: 'translate(-50%, -50%)', border: '2px dashed rgba(255, 255, 255, 0.85)', borderRadius: '14px', pointerEvents: 'none' },
   reticleCrosshair: { position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', transform: 'translate(-50%, -50%)', borderRadius: '50%', backgroundColor: 'rgba(59, 130, 246, 0.8)' },
   torchButton: { position: 'absolute', top: '10px', right: '10px', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: '700', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
-  uploadDropzone: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8fafc', height: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  uploadDropzone: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '16px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8fafc', minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   uploadPlaceholder: { display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' },
-  previewImg: { maxHeight: '180px', maxWidth: '100%', borderRadius: '8px', objectFit: 'contain' },
+  uploadPreviewContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' },
+  previewImg: { maxHeight: '170px', maxWidth: '100%', borderRadius: '8px', objectFit: 'contain' },
+  reUploadTag: { fontSize: '0.75rem', fontWeight: '700', color: '#2563eb', backgroundColor: '#eff6ff', padding: '4px 10px', borderRadius: '12px', border: '1px solid #bfdbfe' },
   zoomControlBox: { marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' },
   zoomLabel: { fontSize: '0.78rem', color: '#475569' },
   zoomSlider: { width: '100%', cursor: 'pointer' },
