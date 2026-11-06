@@ -111,7 +111,7 @@ export default function App() {
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • HAM10000 Scoped");
+        setStatus("v2.0 Engine Active • Dynamic Tensor Pipeline");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
         setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
@@ -169,10 +169,22 @@ export default function App() {
     const imgData = ctx.getImageData(0, 0, 224, 224).data;
 
     const inputName = session.inputNames[0];
-    const tensorDims = [1, 3, 224, 224];
+    const inputMeta = session.inputMetadata ? session.inputMetadata[inputName] : null;
+
+    // Auto-detect ONNX expected tensor dimensions (NHWC vs NCHW)
+    let dims = [1, 224, 224, 3];
+    if (inputMeta && inputMeta.dimensions && inputMeta.dimensions.length === 4) {
+      dims = inputMeta.dimensions.map((d, idx) => {
+        if (typeof d === 'number' && d > 0) return d;
+        return (idx === 1 && inputMeta.dimensions[3] === 3) ? 224 : (idx === 3 ? 3 : 224);
+      });
+      dims[0] = 1;
+    }
+
+    const isNCHW = (dims[1] === 3);
     const float32Data = new Float32Array(1 * 3 * 224 * 224);
 
-    // Standard ImageNet Normalization
+    // ImageNet Normalization
     const mean = [0.485, 0.456, 0.406];
     const std  = [0.229, 0.224, 0.225];
 
@@ -181,12 +193,19 @@ export default function App() {
       const g = (imgData[i * 4 + 1] / 255.0 - mean[1]) / std[1];
       const b = (imgData[i * 4 + 2] / 255.0 - mean[2]) / std[2];
 
-      float32Data[i] = r;
-      float32Data[224 * 224 + i] = g;
-      float32Data[2 * 224 * 224 + i] = b;
+      if (isNCHW) {
+        float32Data[i] = r;
+        float32Data[224 * 224 + i] = g;
+        float32Data[2 * 224 * 224 + i] = b;
+      } else {
+        // NHWC layout expected by ONNX input_layer:0 [1, 224, 224, 3]
+        float32Data[i * 3]     = r;
+        float32Data[i * 3 + 1] = g;
+        float32Data[i * 3 + 2] = b;
+      }
     }
 
-    const inputTensor = new ort.Tensor('float32', float32Data, tensorDims);
+    const inputTensor = new ort.Tensor('float32', float32Data, dims);
     const feeds = { [inputName]: inputTensor };
 
     const inferenceStart = performance.now();
@@ -194,12 +213,18 @@ export default function App() {
     const inferenceEnd = performance.now();
 
     const rawOutput = Array.from(output[session.outputNames[0]].data);
-    
-    // Stable Softmax Logit Normalization
-    const maxLogit = Math.max(...rawOutput);
-    const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
-    const sumExp = expValues.reduce((a, b) => a + b, 0);
-    const probs = expValues.map(v => v / sumExp);
+    const sumRaw = rawOutput.reduce((a, b) => a + b, 0);
+
+    // Auto-detect Softmax output vs raw logits
+    let probs;
+    if (Math.abs(sumRaw - 1.0) < 0.08 && rawOutput.every(v => v >= -0.01)) {
+      probs = rawOutput.map(v => Math.max(0, v));
+    } else {
+      const maxLogit = Math.max(...rawOutput);
+      const expValues = rawOutput.map(v => Math.exp(v - maxLogit));
+      const sumExp = expValues.reduce((a, b) => a + b, 0);
+      probs = expValues.map(v => v / sumExp);
+    }
 
     const differentialDiagnosis = Object.keys(CLASS_METADATA).map((idx) => {
       const classId = parseInt(idx, 10);
@@ -225,7 +250,6 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // Out-of-Distribution (<30% certainty threshold) for Non-Dermatoscopic images / Scars / Wounds
     const isNonDermatoscopic = topMatch.rawProbability < 0.30;
 
     const scanRecord = {
