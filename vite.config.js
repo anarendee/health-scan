@@ -3,5 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: './', // Uses relative paths for all bundled assets and model files
+  base: './',
+  build: {
+    target: 'es2015', // Fixes mobile Safari/Chrome JS execution crashes
+  },
 });
