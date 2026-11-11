@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as ort from 'onnxruntime-web';
 
+// Configure ONNX WebAssembly for mobile browser compatibility
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
+ort.env.wasm.numThreads = 1; // Prevents iOS/Android WebAssembly worker crashes
+ort.env.wasm.proxy = false;  // Disables proxy worker for direct main-thread inference
 
 const CLASS_METADATA = {
   0: { 
@@ -107,16 +110,18 @@ export default function App() {
     async function init() {
       try {
         setStatus("Loading MobileNetV3 WASM weights...");
-        const modelPath = `${window.location.origin}/model/skin_model.onnx`;
+        
+        // Relative path fix for subdirectories (GitHub Pages /health-scan/)
+        const modelPath = './model/skin_model.onnx';
         const modelSession = await ort.InferenceSession.create(modelPath);
         
         setSession(modelSession);
         setLoading(false);
         setErrorMessage(null);
-        setStatus("v2.0 Engine Active • HAM10000 Scoped");
+        setStatus("v2.0 Engine Active • Mobile WASM Ready");
       } catch (err) {
         console.error("ONNX Model Initialization Error:", err);
-        setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx`);
+        setErrorMessage(`Model failed to load: ${err.message}. Verify public/model/skin_model.onnx exists.`);
         setStatus("Initialization Failed");
         setLoading(false);
       }
@@ -259,8 +264,7 @@ export default function App() {
     const meta = CLASS_METADATA[topMatch.id];
     const imageSnapshot = sourceCanvas.toDataURL('image/png');
 
-    // ENHANCED OOD SAFEGUARD:
-    // Triggers if top confidence is < 45% OR top 2 predictions are within a 10% margin (e.g. 31.2% vs 30.8%)
+    // OOD Safeguard: <45% probability OR <10% margin gap between top 2 classes
     const isOOD = topMatch.rawProbability < 0.45 || margin < 0.10;
 
     const scanRecord = {
