@@ -3,9 +3,5 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    fs: {
-      allow: ['..']
-    }
-  }
+  base: '/health-scan/', // Required for GitHub Pages subfolder deployment
 });
